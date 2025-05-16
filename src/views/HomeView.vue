@@ -121,12 +121,9 @@ export default {
         }
       }
     },
+    // eslint-disable-next-line no-unused-vars
     goToChatRoom(categoryId, roomId) {
-      // Vue Router를 사용하여 페이지 이동 (나중에 구현)
-      // 지금은 간단히 console.log만 찍거나 alert를 띄웁니다.
-      // this.$router.push(`/category/${categoryId}/room/${roomId}`);
-      alert(`'${categoryId}' 카테고리의 '${roomId}' 방으로 이동합니다. (라우터 설정 필요)`);
-      console.log(`Navigating to room: ${roomId} in category: ${categoryId}`);
+      this.$router.push(`/category/${categoryId}/room/${roomId}`); // <--- 이렇게 수정되어야 합니다!
     }
   },
   mounted() {
