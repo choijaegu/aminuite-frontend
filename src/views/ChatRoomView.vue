@@ -1,39 +1,56 @@
 <template>
   <div class="chat-room-view">
     <div class="room-header">
-      <h1>채팅방: {{ roomDisplayName }}</h1>
-      <p>카테고리: {{ categoryId }} | 방 ID: {{ roomId }}</p>
-      <p id="status" :class="connectionStatusClass">{{ connectionStatus }}</p>
-      <div v-if="!stompClient || !stompClient.connected">
-        <button @click="connect" :disabled="connecting">
-          {{ connecting ? '연결 중...' : '채팅 서버에 연결하기' }}
+      <h1>{{ roomDisplayName }}</h1>
+      <p class="room-meta">카테고리: {{ categoryId }}</p>
+      <p id="status" :class="connectionStatusClass">
+        {{ connectionStatus }}
+        <span v-if="currentUsername" class="current-username"> ({{ currentUsername }})</span>
+        <span v-if="stompClient && stompClient.active" class="user-count"> (현재 인원: {{ currentRoomUserCount }}명)</span>
+      </p>
+      <div v-if="!stompClient || !stompClient.active" class="connect-button-container">
+        <button @click="connect" :disabled="connecting || (stompClient && stompClient.active)">
+          {{ connecting ? '연결 중...' : (stompClient && stompClient.active ? '연결됨' : '채팅 서버에 연결하기') }}
         </button>
       </div>
     </div>
 
-    <div class="chat-container">
-      <div id="messages" class="messages-area">
-        <div v-for="(msg, index) in receivedMessages" :key="index" class="message" :class="{'my-message': msg.sender === username, 'system-message': msg.type === 'JOIN' || msg.type === 'LEAVE'}">
-          <span class="sender" v-if="msg.type === 'CHAT'">{{ msg.sender }}: </span>
-          <span class="content">{{ msg.content }}</span>
+    <div class="main-content-area">
+      <div class="chat-main-panel"> <div class="chat-container"> <div id="messages" class="messages-area" ref="messagesArea">
+            <div v-for="(msg, index) in receivedMessages" :key="index" class="message" :class="{'my-message': msg.sender === currentUsername, 'system-message': msg.type === 'JOIN' || msg.type === 'LEAVE'}">
+              <template v-if="msg.type !== 'USER_LIST_UPDATE'">
+                <span class="sender" v-if="msg.type === 'CHAT'">{{ msg.sender }}: </span>
+                <span class="content">{{ msg.content }}</span>
+              </template>
+            </div>
           </div>
+        </div>
+
+        <div class="message-input-controls"> <div class="message-input-area">
+              <input
+                type="text"
+                id="messageInput"
+                v-model="newMessage"
+                @keydown.enter="sendMessage"
+                placeholder="메시지를 입력하세요..."
+                :disabled="!stompClient || !stompClient.active || isCooldownActive"
+              />
+              <button @click="sendMessage" :disabled="!stompClient || !stompClient.active || !newMessage.trim() || isCooldownActive">
+                전송
+              </button>
+          </div>
+          <p v-if="isCooldownActive" class="cooldown-message">
+            {{ cooldownRemainingSeconds }}초 후에 다시 메시지를 보낼 수 있습니다.
+          </p>
+        </div>
       </div>
 
-      <div class="message-input-area">
-        <input
-          type="text"
-          id="messageInput"
-          v-model="newMessage"
-          @keydown.enter="sendMessage"
-          placeholder="메시지를 입력하세요..."
-          :disabled="!stompClient || !stompClient.connected"
-        />
-        <button @click="sendMessage" :disabled="!stompClient || !stompClient.connected || !newMessage.trim()">
-          전송
-        </button>
+      <div class="user-list-sidebar" v-if="stompClient && stompClient.active"> <h4>참여자 목록 ({{ currentRoomUserCount }}명)</h4>
+        <ul class="user-list">
+          <li v-for="userInList in currentRoomUsers" :key="userInList">{{ userInList }}</li>
+        </ul>
       </div>
     </div>
-
     <div class="navigation-links">
       <router-link :to="`/category/${categoryId}`">채팅방 목록으로 돌아가기</router-link> |
       <router-link to="/">홈으로 돌아가기</router-link>
@@ -41,28 +58,40 @@
   </div>
 </template>
 
-// ChatRoomView.vue의 <script>
+<script>
+// <script> 부분은 이전에 드렸던 "채팅방 인원 수 및 참여자 목록 표시" 기능과
+// "쿨다운 시간 표시" 기능이 모두 포함된 최종본입니다.
 import SockJS from 'sockjs-client/dist/sockjs.min.js';
-import { Client as StompClient } from '@stomp/stompjs'; // @stomp/stompjs에서 Client를 StompClient라는 이름으로 가져옴
+import { Client as StompClient } from '@stomp/stompjs';
+import axios from 'axios';
+
+const CHAT_COOLDOWN_DURATION_SECONDS = 5; // 백엔드 ChatController와 동일하게 설정
 
 export default {
   name: 'ChatRoomView',
   props: ['categoryId', 'roomId'],
   data() {
     return {
-      stompClient: null, // 이제 Stomp.Client 객체가 될 것입니다.
-      // ... (나머지 data 속성들은 거의 동일) ...
-      username: "User" + Math.floor(Math.random() * 1000),
+      stompClient: null,
       receivedMessages: [],
       newMessage: '',
       connectionStatus: '연결 안됨.',
       connecting: false,
-      roomDisplayName: ''
+      roomDisplayName: this.roomId,
+      roomDetailsError: null,
+      currentRoomUsers: [],
+      currentRoomUserCount: 0,
+      isCooldownActive: false,
+      cooldownRemainingSeconds: 0,
+      cooldownTimer: null
     };
   },
   computed: {
+    currentUsername() {
+      return localStorage.getItem('chatUsername') || '익명사용자';
+    },
     connectionStatusClass() {
-      if (this.stompClient && this.stompClient.connected) {
+      if (this.stompClient && this.stompClient.active) {
         return 'status-connected';
       } else if (this.connecting) {
         return 'status-connecting';
@@ -71,193 +100,189 @@ export default {
     }
   },
   methods: {
+    async fetchRoomDetails() {
+      if (!this.roomId) { this.roomDisplayName = '알 수 없는 방'; return; }
+      this.roomDetailsError = null;
+      try {
+        const response = await axios.get(`http://localhost:8080/api/chatrooms/${this.roomId}`);
+        if (response.data && response.data.name) { this.roomDisplayName = response.data.name; }
+        else { this.roomDisplayName = this.roomId; }
+      } catch (err) {
+        this.roomDetailsError = `${this.roomId} 방 정보 로드 오류`; this.roomDisplayName = this.roomId;
+      }
+    },
     connect() {
-      if (!this.roomId) {
-        this.connectionStatus = "오류: 방 ID가 없습니다.";
-        console.error("Room ID is not available.");
-        return;
+      const usernameToUse = this.currentUsername;
+      console.log(`Attempting to connect to room: ${this.roomId} as ${usernameToUse}`);
+      if (!this.roomId) { this.connectionStatus = "오류: 방 ID가 없습니다."; console.error("Room ID is not available."); return; }
+      if (this.connecting || (this.stompClient && this.stompClient.active)) { console.log(this.connecting ? "이미 연결 시도 중입니다." : "이미 연결되어 있습니다."); return; }
+      this.connecting = true; this.connectionStatus = "서버에 연결 중...";
+      if (this.stompClient && typeof this.stompClient.deactivate === 'function') { this.stompClient.deactivate(); }
+
+      this.stompClient = new StompClient({
+        webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
+        debug: (str) => { console.log('STOMP DEBUG: ' + str); },
+        reconnectDelay: 5000, heartbeatIncoming: 4000, heartbeatOutgoing: 4000,
+      });
+
+      this.stompClient.onConnect = (frame) => {
+        this.connecting = false;
+        this.connectionStatus = `서버 연결 성공! (${usernameToUse} / ${this.roomDisplayName})`;
+        console.log('Connected to WebSocket: ' + frame);
+        this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
+          const message = JSON.parse(messageOutput.body);
+          if (message.type === 'USER_LIST_UPDATE') {
+            this.currentRoomUsers = message.users ? [...message.users].sort() : [];
+            this.currentRoomUserCount = message.userCount || 0;
+          } else if (message.type === 'JOIN' || message.type === 'LEAVE' || message.type === 'CHAT') {
+            this.receivedMessages.push(message);
+          }
+          this.$nextTick(() => {
+            const messagesArea = this.$refs.messagesArea;
+            if (messagesArea) messagesArea.scrollTop = messagesArea.scrollHeight;
+          });
+        });
+        const joinMessage = { sender: usernameToUse, type: 'JOIN', roomId: this.roomId, content: `${usernameToUse} 님이 입장했습니다.` };
+        this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
+      };
+      this.stompClient.onStompError = (frame) => { this.connecting = false; this.connectionStatus = "STOMP 오류"; console.error('STOMP Error:', frame);};
+      this.stompClient.onWebSocketError = (event) => { this.connecting = false; this.connectionStatus = "WebSocket 오류"; console.error('WebSocket Error:', event);};
+      this.stompClient.activate();
+    },
+    disconnect() {
+      const usernameToUse = this.currentUsername;
+      if (this.stompClient && this.stompClient.active) {
+        const leaveMessage = { sender: usernameToUse, type: 'LEAVE', roomId: this.roomId, content: `${usernameToUse} 님이 퇴장했습니다.` };
+        try { this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(leaveMessage) });
+        } catch (e) { console.warn("Failed to publish LEAVE message", e); }
+        this.stompClient.deactivate();
+      } else if (this.stompClient) {
+         try { this.stompClient.deactivate(); } catch(e) { /* Do nothing */ }
       }
-      if (this.stompClient && this.stompClient.connected) {
-        console.log("이미 연결되어 있습니다.");
-        return;
+      this.connectionStatus = "연결 끊김."; console.log("STOMP client disconnected."); this.connecting = false;
+      this.currentRoomUsers = []; this.currentRoomUserCount = 0;
+      this.clearCooldown();
+    },
+    sendMessage() {
+      const usernameToUse = this.currentUsername;
+      if (this.isCooldownActive) { return; } // 쿨다운 중이면 UI에서 버튼이 비활성화되지만, 만약을 위해 추가
+      if (this.newMessage.trim() && this.stompClient && this.stompClient.active) {
+        const chatMessage = { sender: usernameToUse, content: this.newMessage, type: 'CHAT', roomId: this.roomId };
+        this.stompClient.publish({
+          destination: `/app/chat.sendMessage/${this.roomId}`,
+          body: JSON.stringify(chatMessage)
+        });
+        this.newMessage = '';
+        this.startCooldown();
+      } else if (!this.stompClient || !this.stompClient.active) {
+        alert("먼저 채팅 서버에 연결해주세요.");
       }
-
-      this.connecting = true;
-            this.connectionStatus = "서버에 연결 중...";
-
-            if (this.stompClient) { // 이미 클라이언트 객체가 있다면 비활성화 후 새로 만들기
-              this.stompClient.deactivate();
-            }
-
-            this.stompClient = new StompClient({
-              // brokerURL: 'ws://localhost:8080/ws', // SockJS를 안 쓰면 이렇게 직접 WebSocket URL을 줍니다.
-              webSocketFactory: function () { // SockJS를 사용하려면 webSocketFactory를 제공합니다.
-                return new SockJS('http://localhost:8080/ws'); // 백엔드 WebSocket 엔드포인트
-              },
-              connectHeaders: {
-                // login: 'user', // 필요시 인증 헤더
-                // passcode: 'password'
-              },
-              debug: function (str) { // 디버그 로그를 보고 싶다면 추가
-                console.log('STOMP DEBUG: ' + str);
-              },
-              reconnectDelay: 5000, // 자동 재연결 딜레이 (ms)
-              heartbeatIncoming: 4000,
-              heartbeatOutgoing: 4000,
-            });
-
-            this.stompClient.onConnect = (frame) => { // 연결 성공 시 콜백
-              this.connecting = false;
-              this.connectionStatus = `서버 연결 성공! 사용자명: ${this.username} (방: ${this.roomId})`;
-              console.log('Connected to WebSocket: ' + frame);
-
-              // 해당 방의 토픽 구독
-              this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
-                const message = JSON.parse(messageOutput.body);
-                this.receivedMessages.push(message);
-                this.$nextTick(() => {
-                  const messagesDiv = this.$el.querySelector('#messages');
-                  if (messagesDiv) messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                });
-              });
-
-              // 서버에 JOIN 메시지 전송
-              const joinMessage = {
-                sender: this.username,
-                type: 'JOIN',
-                roomId: this.roomId,
-                content: `${this.username} 님이 입장했습니다.`
-              };
-              // @stomp/stompjs 에서는 publish 메소드를 사용합니다.
-              this.stompClient.publish({
-                destination: `/app/chat.addUser/${this.roomId}`,
-                body: JSON.stringify(joinMessage)
-              });
-            };
-
-            this.stompClient.onStompError = (frame) => { // STOMP 프로토콜 오류 시 콜백
-              this.connecting = false;
-              this.connectionStatus = "STOMP 프로토콜 오류. 콘솔을 확인하세요.";
-              console.error('STOMP Protocol Error:', frame);
-              // 상세 오류 내용: frame.headers['message'] 와 frame.body
-            };
-
-            this.stompClient.onWebSocketError = (event) => { // WebSocket 자체 오류 시 콜백
-               this.connecting = false;
-               this.connectionStatus = "WebSocket 연결 오류. 콘솔을 확인하세요.";
-               console.error('WebSocket Connection Error:', event);
-            };
-
-            this.stompClient.activate(); // 클라이언트 활성화 (연결 시작)
-          },
-
-          disconnect() {
-            if (this.stompClient && this.stompClient.active) { // .active로 연결(활성화) 상태 확인
-              const leaveMessage = {
-                sender: this.username,
-                type: 'LEAVE',
-                roomId: this.roomId,
-                content: `${this.username} 님이 퇴장했습니다.`
-              };
-              try {
-                // publish는 연결된 상태에서만 시도
-                this.stompClient.publish({
-                  destination: `/app/chat.sendMessage/${this.roomId}`,
-                  body: JSON.stringify(leaveMessage)
-                });
-              } catch (e) {
-                console.warn("Failed to publish LEAVE message, connection might be lost already:", e);
-              }
-
-              // deactivate는 연결 시도 중이었거나 연결된 상태 모두에서 호출 가능
-              this.stompClient.deactivate();
-              this.connectionStatus = "연결 끊김 (deactivated)."; // 상태 업데이트
-              console.log("STOMP client deactivated.");
-            } else if (this.stompClient) { // 객체는 있지만 active가 아닌 경우 (예: 아직 연결 전, 또는 이미 deactivate 된 후)
-               console.log("STOMP client exists but is not active. No action taken for disconnect message.");
-               // 필요하다면 여기서 stompClient.deactivate()를 한번 더 호출해볼 수도 있지만, 보통은 필요 없음.
-               this.stompClient.deactivate(); // 혹시 모르니 호출
-               this.connectionStatus = "연결 시도 중이었거나 이미 끊김.";
-            } else {
-               this.connectionStatus = "연결 없음.";
-               console.log("No STOMP client to disconnect.");
-            }
-            // this.stompClient = null; // 여기서 null로 만들면 재연결 로직에 문제 생길 수 있음. connect에서 처리.
-            // 연결 관련 UI 상태 초기화
-            document.getElementById('roomId').disabled = false; // (ChatRoomView에는 roomId input이 없으므로 이 줄은 영향 없음)
-            document.getElementById('connectButton').disabled = false; // (ChatRoomView에는 connectButton이 없으므로 이 줄은 영향 없음)
-            document.getElementById('disconnectButton').disabled = true; // (ChatRoomView에는 disconnectButton이 없으므로 이 줄은 영향 없음)
-            document.getElementById('sendButton').disabled = true;
-            document.getElementById('messageInput').disabled = true; // 메시지 입력창 비활성화
-          },
-
-          sendMessage() {
-            if (this.newMessage.trim() && this.stompClient && this.stompClient.active) {
-              const chatMessage = {
-                sender: this.username,
-                content: this.newMessage,
-                type: 'CHAT',
-                roomId: this.roomId
-              };
-              this.stompClient.publish({ // publish 사용
-                destination: `/app/chat.sendMessage/${this.roomId}`,
-                body: JSON.stringify(chatMessage)
-              });
-              this.newMessage = '';
-            } else if (!this.stompClient || !this.stompClient.active) {
-              alert("먼저 채팅 서버에 연결해주세요.");
-            }
-          },
-    // formatTimestamp(timestamp) { // 필요하다면 타임스탬프 포맷팅 함수
-    //   if (!timestamp) return '';
-    //   return new Date(timestamp).toLocaleTimeString();
-    // }
+    },
+    startCooldown() {
+      if (this.isCooldownActive) return;
+      this.isCooldownActive = true;
+      this.cooldownRemainingSeconds = CHAT_COOLDOWN_DURATION_SECONDS;
+      if (this.cooldownTimer) { clearInterval(this.cooldownTimer); }
+      this.cooldownTimer = setInterval(() => {
+        this.cooldownRemainingSeconds--;
+        if (this.cooldownRemainingSeconds <= 0) {
+          this.clearCooldown();
+        }
+      }, 1000);
+    },
+    clearCooldown() {
+      clearInterval(this.cooldownTimer);
+      this.cooldownTimer = null;
+      this.isCooldownActive = false;
+      this.cooldownRemainingSeconds = 0;
+    }
   },
-  mounted() {
-    console.log('ChatRoomView Mounted - Category ID:', this.categoryId, '| Room ID:', this.roomId);
-    // (선택) 방 이름을 API로 가져와서 roomDisplayName에 설정하는 로직 추가 가능
-    // 예: axios.get(`http://localhost:8080/api/chatrooms/${this.roomId}`).then(response => this.roomDisplayName = response.data.name);
-    this.roomDisplayName = this.roomId; // 일단 roomId로 표시
-
-    // 컴포넌트가 마운트되면 자동으로 연결 시도
-    this.connect();
+  async mounted() {
+    console.log('ChatRoomView Mounted - Category ID:', this.categoryId, '| Room ID:', this.roomId, '| Username from localStorage:', localStorage.getItem('chatUsername'));
+    await this.fetchRoomDetails();
+    if (this.roomId) {
+        this.connect();
+    } else {
+        this.connectionStatus = "오류: 방 ID가 유효하지 않습니다.";
+        console.error("Cannot connect: Room ID is not valid on mount.");
+    }
   },
-  beforeUnmount() { // Vue 3에서는 beforeUnmount (Vue 2는 beforeDestroy)
-    // 컴포넌트가 파괴되기 전에 WebSocket 연결 해제
-    this.disconnect();
+  beforeUnmount() {
+    if (this.stompClient) {
+        this.disconnect(); // disconnect에서 clearCooldown 호출
+    }
+    // this.clearCooldown(); // disconnect에서 이미 호출하므로 중복 불필요
   }
 }
 </script>
 
 <style scoped>
+/* 이전 답변에서 드렸던 ChatRoomView.vue의 <style scoped> 전체 내용을 여기에 붙여넣으시면 됩니다.
+   (채팅창과 사용자 목록을 옆으로 배치하고, 쿨다운 메시지 스타일 등을 포함한 최종 버전)
+*/
 .chat-room-view {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 100px); /* 헤더/네비게이션 높이 제외한 전체 높이, 조절 필요 */
-  max-width: 800px;
+  max-height: calc(100vh - 40px);
+  max-width: 900px;
+  min-width: 600px;
   margin: 20px auto;
   border: 1px solid #ccc;
   border-radius: 8px;
   padding: 20px;
   box-shadow: 0 0 10px rgba(0,0,0,0.1);
+  background-color: #fff;
 }
 .room-header {
   text-align: center;
-  padding-bottom: 15px;
+  padding-bottom: 10px;
   border-bottom: 1px solid #eee;
+  margin-bottom: 10px;
 }
-.room-header h1 { margin-top: 0; }
-#status { font-weight: bold; margin-top: 5px; }
+.room-header h1 { margin-top: 0; font-size: 1.5em; margin-bottom: 5px;}
+.room-header p { font-size: 0.85em; color: #666; margin: 2px 0; }
+.room-header p.room-meta {
+  font-size: 0.8em;
+  color: #888;
+  margin-bottom: 8px;
+}
+#status { font-weight: bold; margin-top: 5px; font-size: 0.9em; }
 .status-connected { color: green; }
 .status-disconnected { color: red; }
 .status-connecting { color: orange; }
+.current-username {
+  font-weight: normal;
+  color: #555;
+  font-size: 0.9em;
+}
+.user-count {
+  font-size: 0.85em;
+  color: #777;
+  margin-left: 5px;
+}
+.connect-button-container {
+  margin-top: 10px;
+}
 
-.chat-container {
-  flex-grow: 1; /* 남은 공간을 모두 차지하도록 */
+.main-content-area {
+  display: flex;
+  flex-grow: 1;
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.chat-main-panel {
+  flex-grow: 3;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* 내부 스크롤은 messages-area에서 */
-  margin-top: 15px;
+  margin-right: 20px;
+  overflow: hidden;
+}
+.chat-container {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .messages-area {
   flex-grow: 1;
@@ -266,72 +291,89 @@ export default {
   padding: 10px;
   margin-bottom: 10px;
   background-color: #f9f9f9;
+  min-height: 300px;
 }
 .message {
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  border-radius: 15px;
-  max-width: 70%;
-  word-wrap: break-word;
+  margin-bottom: 8px; padding: 8px 12px; border-radius: 18px;
+  max-width: 90%; word-wrap: break-word; line-height: 1.4;
 }
 .message.my-message {
-  background-color: #DCF8C6; /* 내 메시지 배경색 */
-  margin-left: auto; /* 오른쪽 정렬 */
-  border-bottom-right-radius: 5px;
+  background-color: #DCF8C6; margin-left: auto; border-bottom-right-radius: 5px;
 }
 .message:not(.my-message) {
-  background-color: #E5E5EA; /* 다른 사람 메시지 배경색 */
-  margin-right: auto; /* 왼쪽 정렬 */
-  border-bottom-left-radius: 5px;
+  background-color: #E9E9EB; margin-right: auto; border-bottom-left-radius: 5px;
 }
 .message .sender {
-  font-weight: bold;
-  display: block;
-  font-size: 0.85em;
-  color: #555;
-  margin-bottom: 3px;
+  font-weight: bold; display: block; font-size: 0.8em; color: #333; margin-bottom: 4px;
 }
-.message.system-message { /* JOIN, LEAVE 메시지 스타일 */
-  text-align: center;
-  font-style: italic;
-  color: #777;
-  background-color: transparent;
-  font-size: 0.9em;
-  width: 100%;
-  max-width: 100%;
+.message.system-message {
+  text-align: center; font-style: italic; color: #888; background-color: transparent;
+  font-size: 0.85em; width: 100%; max-width: 100%; padding: 5px 0;
 }
-.message.system-message .content {
-   display: inline-block; /* 가운데 정렬된 텍스트가 너무 길어지지 않도록 */
-}
+.message.system-message .content { display: inline-block; }
 
-
+.message-input-controls {
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
 .message-input-area {
   display: flex;
-  margin-top: 10px;
-  border-top: 1px solid #eee;
-  padding-top: 15px;
+  align-items: center;
 }
 .message-input-area input[type="text"] {
-  flex-grow: 1;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 20px;
-  margin-right: 10px;
+  flex-grow: 1; padding: 10px 15px; border: 1px solid #ccc;
+  border-radius: 20px; margin-right: 10px; font-size: 1em;
 }
 .message-input-area button {
-  padding: 10px 20px;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 20px;
-  cursor: pointer;
+  padding: 10px 20px; background-color: #007bff; color: white;
+  border: none; border-radius: 20px; cursor: pointer; font-size: 1em;
+  white-space: nowrap;
 }
-.message-input-area button:hover {
-  background-color: #0056b3;
+.message-input-area button:hover { background-color: #0056b3; }
+.message-input-area button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+.cooldown-message {
+  font-size: 0.85em;
+  color: #dc3545; /* 부드러운 빨간색 */
+  margin-top: 8px;
+  text-align: right;
+  padding-right: 10px; /* 버튼과 정렬을 위해 약간의 여백 */
+  height: 1.2em;
 }
-.message-input-area button:disabled {
-  background-color: #ccc;
-  cursor: not-allowed;
+
+.user-list-sidebar {
+  flex-grow: 1;
+  min-width: 180px;
+  max-width: 250px;
+  border-left: 1px solid #e0e0e0;
+  padding-left: 15px;
+  overflow-y: auto;
+  background-color: #fdfdfd;
+  height: 100%;
+}
+.user-list-sidebar h4 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1.1em;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+.user-list {
+  list-style-type: none;
+  padding: 0;
+}
+.user-list li {
+  padding: 6px 0;
+  font-size: 0.95em;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px dotted #f0f0f0;
+}
+.user-list li:last-child {
+    border-bottom: none;
 }
 
 .navigation-links {
@@ -342,5 +384,10 @@ export default {
 }
 .navigation-links a {
   margin: 0 10px;
+  color: #007bff;
+  text-decoration: none;
+}
+.navigation-links a:hover {
+  text-decoration: underline;
 }
 </style>
