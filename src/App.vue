@@ -16,7 +16,6 @@
           <router-link v-if="!isUserLoggedIn" to="/signup">회원가입</router-link>
         </div>
       </div>
-
       <div class="user-actions-section">
         <span v-if="isUserLoggedIn && currentUsername" class="current-app-username">
           <strong>{{ currentUsername }}</strong> 님
@@ -30,8 +29,8 @@
     </nav>
 
     <div class="contact-info-bar">
-      잠깐! Aminute을 시작하기 전, 공지사항을 읽어주세요!<br>
-      문의사항은 <a href="mailto:magic753@naver.com">magic753@naver.com</a>으로 보내주세요.
+      <p>잠깐! Aminute을 시작하기 전, 공지사항을 읽어주세요!</p>
+      <p>문의사항은 <a href="mailto:magic753@naver.com">magic753@naver.com</a>으로 보내주세요.</p>
     </div>
 
     <router-view @login-success="updateLoginStatusAndUsername" @username-updated="updateGlobalUsername"/>
@@ -39,7 +38,7 @@
 </template>
 
 <script>
-// 스크립트 부분은 이전과 동일하게 유지합니다.
+// 스크립트 부분은 이전 답변과 동일하게 유지합니다.
 export default {
   name: 'App',
   data() {
@@ -115,7 +114,7 @@ export default {
 </script>
 
 <style>
-/* #app 스타일은 이전과 동일 */
+/* 기존 #app, .contact-info-bar 등 전역 스타일 유지 */
 #app {
   font-family: Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -123,117 +122,121 @@ export default {
   color: #2c3e50;
 }
 
-/* 네비게이션 바 전체 레이아웃 */
 .app-nav {
-  padding: 10px 30px;
+  padding: 10px 20px; /* 모바일을 위해 패딩 약간 조정 */
   background-color: #f8f9fa;
   border-bottom: 1px solid #e7e7e7;
   display: flex;
-  justify-content: space-between; /* 왼쪽과 오른쪽 섹션을 양 끝으로 분산 */
+  justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap; /* 모바일에서 공간 부족 시 줄바꿈 허용 */
 }
 
-/* 왼쪽 섹션 (로고 + 주요 링크) */
 .nav-left-section {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap; /* 로고와 링크는 한 줄에 유지 시도 */
 }
 
 .logo-link {
   text-decoration: none;
-  display: inline-flex; /* SVG 정렬을 위해 inline-flex 사용 */
+  display: inline-flex;
   align-items: center;
-  margin-right: 25px; /* 로고와 다음 링크 그룹 사이 간격 */
+  margin-right: 15px; /* 로고와 다음 링크 그룹 사이 간격 */
 }
 
 .logo-svg {
-  vertical-align: middle; /* 다른 텍스트와 수직 정렬 */
+  vertical-align: middle;
+  height: 24px; /* SVG 높이 고정 (너비는 비율에 맞게) */
+  width: auto;
 }
-
-/* SVG 내부 요소 스타일 */
 .logo-svg .logo-char-a-styled {
-  font-family: 'Arial Black', Gadget, sans-serif; /* 좀 더 두껍고 개성있는 폰트 */
-  font-size: 25px; /* 크기 조절 */
+  font-family: 'Arial Black', Gadget, sans-serif;
+  font-size: 23px; /* 약간 줄임 */
   font-weight: bold;
-  fill: #007BFF; /* 메인 색상 */
+  fill: #007BFF;
 }
 .logo-svg .logo-clock-hand {
-  stroke: #0056b3; /* A 내부 선 색상 */
-  stroke-width: 2.5;
+  stroke: #0056b3;
+  stroke-width: 2.2px; /* 약간 줄임 */
   stroke-linecap: round;
 }
 .logo-svg .logo-text-minute {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 21px;
-  fill: #2c3e50; /* 나머지 텍스트 색상 */
-  dominant-baseline: central; /* 수직 정렬 */
-  letter-spacing: -0.5px; /* 자간 약간 조절 */
+  font-size: 19px; /* 약간 줄임 */
+  fill: #2c3e50;
+  dominant-baseline: central;
+  letter-spacing: -0.5px;
 }
 
-
-/* 주요 네비게이션 링크 그룹 */
+.nav-main-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* 모바일에서 링크들이 많으면 줄바꿈 허용 */
+}
 .nav-main-links a {
   font-weight: bold;
   color: #2c3e50;
-  margin-right: 15px;
+  margin-right: 10px; /* 링크 간 간격 조정 */
   text-decoration: none;
   cursor: pointer;
+  padding: 5px 0; /* 상하 패딩으로 클릭 영역 확보 */
+}
+.nav-main-links a:last-child {
+  margin-right: 0;
 }
 .nav-main-links a.router-link-exact-active {
-  color: #42b983; /* 활성 링크 색상 */
+  color: #42b983;
 }
 
-/* 오른쪽 사용자 정보 및 액션 섹션 */
 .user-actions-section {
   display: flex;
   align-items: center;
+  margin-left: auto; /* 왼쪽 요소들 외에 오른쪽 끝으로 밀기 (flex-wrap 시 필요) */
+  flex-shrink: 0; /* 줄어들지 않도록 */
 }
 
 .current-app-username {
-  font-size: 0.9em;
+  font-size: 0.85em; /* 약간 줄임 */
   color: #333;
-  margin-right: 10px;
+  margin-right: 8px;
+  white-space: nowrap; /* 줄바꿈 방지 */
 }
 .current-app-username strong {
-    color: #007bff;
-}
-
-.app-nav-item { /* 닉네임 변경 버튼, 로그아웃 링크 등 오른쪽 아이템 간 간격 */
-  margin-left: 10px;
-}
-
-.user-actions-section .action-button-small.utility {
-  padding: 6px 10px;
-  font-size: 0.85em;
-  cursor: pointer;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  background-color: #fff;
-  color: #333;
-}
-.user-actions-section .action-button-small.utility:hover {
-  background-color: #f0f0f0;
-}
-
-.logout-link.app-nav-item {
-  font-weight: bold;
   color: #007bff;
-  text-decoration: none;
-  padding: 6px 0; /* 버튼과 높이감을 유사하게 */
+}
+
+.app-nav-item {
+  margin-left: 8px; /* 아이템 간 간격 */
+}
+.user-actions-section .action-button-small.utility,
+.logout-link.app-nav-item {
+  padding: 5px 8px; /* 버튼/링크 패딩 조정 */
+  font-size: 0.8em; /* 버튼/링크 폰트 크기 조정 */
+  white-space: nowrap;
+}
+.logout-link.app-nav-item {
+  color: #007bff;
+  border: 1px solid transparent; /* 다른 버튼과 유사하게 보이도록 */
+  background-color: transparent;
+  border-radius: 4px;
 }
 .logout-link.app-nav-item:hover {
-  text-decoration: underline;
+  text-decoration: none;
+  background-color: #f0f0f0;
   color: #dc3545;
 }
 
-/* 문의 안내 바 스타일은 이전과 동일 */
 .contact-info-bar {
   background-color: #e9ecef;
   color: #495057;
-  padding: 8px 30px;
+  padding: 8px 20px; /* 패딩 조정 */
   text-align: center;
-  font-size: 0.9em;
+  font-size: 0.85em; /* 약간 줄임 */
   border-bottom: 1px solid #dee2e6;
+}
+.contact-info-bar p {
+  margin: 3px 0; /* 문단 간격 조절 */
 }
 .contact-info-bar a {
   color: #007bff;
@@ -242,5 +245,84 @@ export default {
 }
 .contact-info-bar a:hover {
   text-decoration: underline;
+}
+
+
+/* --- 모바일 화면을 위한 미디어 쿼리 --- */
+@media (max-width: 768px) { /* 일반적인 태블릿 화면 너비 기준 */
+  .app-nav {
+    flex-direction: column; /* 네비게이션 바 요소들을 세로로 쌓음 */
+    padding: 10px 15px; /* 모바일 패딩 조정 */
+  }
+
+  .nav-left-section {
+    width: 100%;
+    justify-content: space-between; /* 로고와 주 링크들을 양쪽으로 분산 */
+    margin-bottom: 10px; /* 아래 사용자 섹션과의 간격 */
+  }
+
+  .logo-link {
+    margin-right: 10px; /* 오른쪽 링크와의 간격 */
+  }
+  .logo-svg {
+    height: 22px; /* 모바일에서 로고 살짝 더 작게 */
+  }
+  .logo-svg .logo-char-a-styled { font-size: 21px; }
+  .logo-svg .logo-text-minute { font-size: 17px; }
+  .logo-svg .logo-clock-hand { stroke-width: 2; }
+
+
+  .nav-main-links {
+    justify-content: flex-start; /* 링크들을 왼쪽부터 나열 */
+    /* 만약 링크가 너무 많아 한 줄에 다 안들어가면, 여기서 추가적인 스타일링 필요 */
+    /* 예: 숨기거나, 햄버거 메뉴로 대체 */
+  }
+  .nav-main-links a {
+    margin-right: 8px; /* 모바일에서 링크 간격 */
+    font-size: 0.9em; /* 링크 글자 크기 */
+  }
+
+  .user-actions-section {
+    width: 100%;
+    justify-content: center; /* 사용자 정보/액션 중앙 정렬 */
+    margin-left: 0; /* 왼쪽 자동 마진 제거 */
+    margin-top: 5px; /* 위쪽 요소와의 간격 */
+  }
+  .current-app-username {
+    margin-right: 5px;
+  }
+  .app-nav-item {
+    margin-left: 5px;
+  }
+}
+
+@media (max-width: 480px) { /* 더 작은 모바일 화면 */
+  .nav-main-links {
+    /* 링크가 많을 경우, 이 너비에서는 일부만 보이게 하거나 스크롤, 또는 햄버거 메뉴 고려 */
+    /* 우선은 글자 크기만 더 줄여봄 */
+    font-size: 0.9em;
+  }
+  .nav-main-links a {
+    padding: 5px;
+    margin-right: 5px;
+  }
+  .logo-svg {
+    height: 20px; /* 더 작은 화면에서 로고 더 작게 */
+  }
+  .logo-svg .logo-char-a-styled { font-size: 19px; }
+  .logo-svg .logo-text-minute { font-size: 15px; }
+
+  .user-actions-section .action-button-small.utility,
+  .logout-link.app-nav-item {
+    padding: 4px 6px;
+    font-size: 0.75em;
+  }
+  .contact-info-bar {
+    font-size: 0.8em;
+    padding: 6px 15px;
+  }
+  .contact-info-bar p {
+    margin: 2px 0;
+  }
 }
 </style>
