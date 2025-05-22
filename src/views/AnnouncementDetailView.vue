@@ -7,7 +7,7 @@
       <p>{{ error }}</p>
       <router-link to="/announcements" class="action-button-small secondary">목록으로 돌아가기</router-link>
     </div>
-    <div v-else-if="announcement" class="announcement-content-wrapper"> {/* 클래스명 변경 고려: announcement-content -> announcement-content-wrapper */}
+    <div v-else-if="announcement" class="announcement-content-wrapper">
       <div class="header-actions">
         <router-link to="/announcements" class="action-button-small secondary">목록으로</router-link>
         </div>
@@ -20,7 +20,7 @@
         </span>
       </div>
       <hr class="divider" />
-      <div class="content-body" v-html="formattedContent"></div> {/* formattedContent는 null 체크 후 반환하므로 안전 */}
+      <div class="content-body" v-html="formattedContent"></div>
     </div>
     <div v-else class="no-data-message"> {/* 클래스명 추가 및 메시지 명확화 */}
       <p>해당 ID의 공지사항을 찾을 수 없습니다.</p>
