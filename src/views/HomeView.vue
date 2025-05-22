@@ -2,7 +2,20 @@
   <div class="home">
     <h1>커뮤니티 카테고리</h1>
 
-    <div v-if="loadingCategories">
+    <nav v-if="categories.length > 0" class="category-nav-bar">
+      <a
+        v-for="category in categories"
+        :key="category.categoryId"
+        href="#"
+        @click.prevent="scrollToCategory(category.categoryId)"
+        class="category-nav-link"
+        :class="{ 'active-category-link': currentScrolledCategoryId === category.categoryId }"
+      >
+        {{ category.name }}
+      </a>
+    </nav>
+
+    <div v-if="loadingCategories" class="loading-message">
       <p>카테고리 목록을 불러오는 중입니다...</p>
     </div>
     <div v-else-if="error" class="error-message">
@@ -10,7 +23,7 @@
     </div>
 
     <ul v-else-if="categories.length > 0" class="category-list">
-      <li v-for="category in categories" :key="category.categoryId" class="category-item">
+      <li v-for="category in categories" :key="category.categoryId" class="category-item" :id="'anchor-category-' + category.categoryId">
         <h3>{{ category.name }}</h3>
         <p class="category-description">{{ category.description }}</p>
 
@@ -77,6 +90,7 @@ export default {
       categories: [],
       loadingCategories: true,
       error: null,
+      currentScrolledCategoryId: null, // 현재 스크롤된 (또는 클릭된) 카테고리 ID 저장용
     };
   },
   methods: {
@@ -122,11 +136,25 @@ export default {
         this.loadingCategories = false;
       }
     },
+    // --- 카테고리 네비게이션 바 클릭 시 스크롤 이동을 위한 메소드 ---
+    scrollToCategory(categoryId) {
+      this.currentScrolledCategoryId = categoryId; // 현재 활성화된 카테고리 ID 업데이트 (CSS 클래스 바인딩용)
+      const element = document.getElementById('anchor-category-' + categoryId);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // (선택 사항) 스크롤 후 해당 카테고리의 채팅방 목록을 자동으로 펼쳐주기
+        const categoryObject = this.categories.find(c => c.categoryId === categoryId);
+        if (categoryObject && !categoryObject.showingChatRooms && !categoryObject.loadingChatRooms) {
+          this.handleFetchChatRooms(categoryObject); // "채팅방 보기" 로직 호출
+        }
+      }
+    },
     handleFetchChatRooms(category) {
       if (category.showingChatRooms && !category.loadingChatRooms) {
         category.showingChatRooms = false;
       } else if (!category.showingChatRooms && !category.loadingChatRooms) {
-        this.fetchChatRooms(category, 0);
+        this.fetchChatRooms(category, 0); // 첫 페이지(0) 로드
       }
     },
     async fetchChatRooms(category, page = 0) {
@@ -195,53 +223,40 @@ export default {
         if (this.$router) this.$router.push('/login');
         return;
       }
-
-      // localStorage에서 로그인 시 저장된 사용자 이름(방장 정보)을 가져옵니다.
       let ownerUsername = localStorage.getItem('chatUsername');
-
-      // ownerUsername이 실제로 존재하는지, 비어있지 않은지 확인합니다.
       if (!ownerUsername) {
-          alert("오류: 방 생성자 닉네임 정보를 찾을 수 없습니다. 다시 로그인 해주세요.");
-          // 이 문제가 발생한다면, LoginView.vue에서 로그인 성공 시
-          // localStorage.setItem('chatUsername', response.data.username); 코드가
-          // 정상적으로 실행되었는지 확인해야 합니다.
+          alert("오류: 사용자 닉네임 정보를 찾을 수 없습니다. 다시 로그인 해주세요.");
           if (this.$router) this.$router.push('/login');
           return;
       }
-
-      // payload 객체에 name과 ownerUsername을 모두 포함시킵니다.
       const payload = {
         name: category.newRoomName.trim(),
-        ownerUsername: ownerUsername // <<--- 이 부분이 백엔드 요구사항에 맞게 포함되도록 수정!
+        ownerUsername: ownerUsername,
       };
-
       const headers = {
         'Authorization': `Bearer ${token}`
       };
-
-      console.log("채팅방 생성 요청 페이로드:", payload); // 실제로 보내는 payload 확인용 로그
-
+      console.log("채팅방 생성 요청 페이로드:", payload);
       try {
         const response = await axios.post(
           `http://localhost:8080/api/categories/${category.categoryId}/chatrooms`,
-          payload, // 수정된 payload 전달
+          payload,
           { headers: headers }
         );
-
         if (response.status === 201) {
           alert(`'${payload.name}' 채팅방이 성공적으로 생성되었습니다! (ID: ${response.data.roomId})`);
-          this.fetchChatRooms(category, 0); // 목록 새로고침
+          this.fetchChatRooms(category, 0);
           category.showingCreateForm = false;
           category.newRoomName = '';
         }
       } catch (err) {
-        console.error("채팅방 생성 중 오류 발생 (프론트엔드):", err.response || err.message || err);
+        console.error("채팅방 생성 중 오류 발생:", err.response || err.message || err);
+        // ... (기존 오류 처리 로직) ...
         if (err.response) {
           if (err.response.status === 401) {
             alert("채팅방 생성 권한이 없습니다. 로그인 상태를 확인해주세요.");
             if (this.$router) this.$router.push('/login');
           } else if (err.response.data) {
-            // 서버에서 오는 구체적인 400 오류 메시지 등을 여기서 확인할 수 있습니다.
             const serverErrorMessage = (typeof err.response.data === 'string') ? err.response.data : (err.response.data.message || JSON.stringify(err.response.data));
             alert(`채팅방 생성 실패: ${serverErrorMessage}`);
           } else {
@@ -262,8 +277,8 @@ export default {
 </script>
 
 <style scoped>
-/* 기존 스타일과 동일하게 유지합니다. */
-/* ... (이전 답변에서 제공된 전체 <style> 내용을 여기에 붙여넣으시면 됩니다.) ... */
+/* 스타일 부분은 이전 답변에서 제공한 내용과 동일하게 유지합니다. */
+/* (category-nav-bar, category-nav-link, active-category-link 스타일 포함) */
 .home {
   padding: 20px;
   max-width: 800px;
@@ -273,13 +288,44 @@ export default {
 h1 {
   text-align: center;
   color: #2c3e50;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 }
+
+.category-nav-bar {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  margin-bottom: 30px;
+  border-bottom: 1px solid #eee;
+}
+.category-nav-link {
+  margin: 5px 10px;
+  padding: 8px 15px;
+  text-decoration: none;
+  color: #007bff;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  transition: all 0.2s ease-in-out;
+  font-weight: 500;
+  cursor: pointer; /* 클릭 가능함을 명시 */
+}
+.category-nav-link:hover {
+  background-color: #e9ecef;
+  border-color: #dee2e6;
+  color: #0056b3;
+}
+.category-nav-link.active-category-link {
+  background-color: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
 .category-list {
   list-style-type: none;
   padding: 0;
 }
-.category-item {
+.category-item { /* 각 카테고리 섹션이 스크롤 대상이 됨 */
   background-color: #f9f9f9;
   border: 1px solid #eee;
   padding: 20px;
