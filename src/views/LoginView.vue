@@ -24,7 +24,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 export default {
   name: 'LoginView',
@@ -42,7 +42,7 @@ export default {
       this.errorMessage = ''; // 이전 에러 메시지 초기화
 
       try {
-        const response = await axios.post('http://localhost:8080/api/auth/signin', {
+        const response = await apiClient.post('/api/auth/signin', {
           username: this.username,
           password: this.password,
         });

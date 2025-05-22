@@ -45,7 +45,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 export default {
   name: 'AnnouncementListView',
@@ -85,7 +85,7 @@ export default {
         // const token = localStorage.getItem('userToken');
         // const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-        const response = await axios.get('http://localhost:8080/api/announcements', {
+        const response = await apiClient.get('/api/announcements', {
           // headers: headers, // 필요시 주석 해제
           params: {
             page: page,

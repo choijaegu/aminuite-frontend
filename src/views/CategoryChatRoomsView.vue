@@ -27,7 +27,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 export default {
   name: 'CategoryChatRoomsView',
@@ -63,9 +63,8 @@ export default {
           // return; // 여기서 실행을 중단할 수도 있습니다.
         }
 
-        const response = await axios.get(
-          `http://localhost:8080/api/categories/${this.categoryId}/chatrooms`,
-          { headers: headers } // 헤더 전달!
+        const response = await apiClient.get(
+          `/api/categories/${this.categoryId}/chatrooms`
         );
         this.chatRooms = response.data;
         console.log(`Workspaceed chat rooms for category ${this.categoryId}:`, this.chatRooms);

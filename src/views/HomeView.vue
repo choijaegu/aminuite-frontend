@@ -81,7 +81,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 export default {
   name: 'HomeView',
@@ -99,11 +99,7 @@ export default {
       this.error = null;
       try {
         const token = localStorage.getItem('userToken');
-        const headers = {};
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        }
-        const response = await axios.get('http://localhost:8080/api/categories', { headers });
+        const response = await apiClient.get('/api/categories');
 
         this.categories = response.data.map(category => ({
           ...category,
@@ -162,13 +158,9 @@ export default {
       try {
         const token = localStorage.getItem('userToken');
         const headers = {};
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        }
-        const response = await axios.get(
-          `http://localhost:8080/api/categories/${category.categoryId}/chatrooms`,
+        const response = await apiClient.get(
+          `/api/categories/${category.categoryId}/chatrooms`,
           {
-            headers: headers,
             params: {
               page: page,
               size: category.chatRoomsPageSize,
@@ -233,15 +225,11 @@ export default {
         name: category.newRoomName.trim(),
         ownerUsername: ownerUsername,
       };
-      const headers = {
-        'Authorization': `Bearer ${token}`
-      };
       console.log("채팅방 생성 요청 페이로드:", payload);
       try {
-        const response = await axios.post(
-          `http://localhost:8080/api/categories/${category.categoryId}/chatrooms`,
-          payload,
-          { headers: headers }
+        const response = await apiClient.post(
+          `/api/categories/${category.categoryId}/chatrooms`,
+          payload
         );
         if (response.status === 201) {
           alert(`'${payload.name}' 채팅방이 성공적으로 생성되었습니다! (ID: ${response.data.roomId})`);

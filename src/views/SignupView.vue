@@ -29,7 +29,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 export default {
   name: 'SignupView',
@@ -68,7 +68,7 @@ export default {
       }
 
       try {
-        const response = await axios.post('http://localhost:8080/api/auth/signup', {
+        const response = await apiClient.post('api/auth/signup', {
           username: this.username,
           password: this.password,
         });

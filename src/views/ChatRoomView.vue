@@ -75,7 +75,7 @@
 <script>
 import SockJS from 'sockjs-client/dist/sockjs.min.js';
 import { Client as StompClient } from '@stomp/stompjs';
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 // CHAT_COOLDOWN_DURATION_SECONDS는 프론트엔드 UI 표시용.
 // 실제 쿨다운 강제는 백엔드에서도 이루어져야 효과적입니다.
@@ -124,10 +124,9 @@ export default {
       }
       this.roomDetailsError = null;
       const token = localStorage.getItem('userToken');
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
       try {
-        const response = await axios.get(`http://localhost:8080/api/chatrooms/${this.roomId}`, { headers });
+        const response = await apiClient.get(`/api/chatrooms/${this.roomId}`);
         if (response.data) {
           this.roomDisplayName = response.data.name || this.roomId;
           this.roomOwner = response.data.ownerUsername || null;
@@ -282,13 +281,11 @@ export default {
         this.$router.push('/login');
         return;
       }
-      const headers = { 'Authorization': `Bearer ${token}` };
 
       try {
-        const response = await axios.post(
-          `http://localhost:8080/api/chatrooms/${this.roomId}/admin/kick`,
-          { usernameToKick: usernameToKick },
-          { headers: headers }
+        const response = await apiClient.post(
+          `/api/chatrooms/${this.roomId}/admin/kick`,
+          { usernameToKick: usernameToKick }
         );
         alert(response.data); // 서버로부터의 성공 메시지
         // 성공 시 WebSocket을 통해 USER_LIST_UPDATE 및 SYSTEM(KICK) 메시지가 오므로,

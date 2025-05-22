@@ -30,7 +30,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import apiClient from '@/services/api';
 
 export default {
   name: 'AnnouncementDetailView',
@@ -70,7 +70,7 @@ export default {
         // 공지사항 상세 API는 permitAll이므로 토큰은 필수는 아님
         // const token = localStorage.getItem('userToken');
         // const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-        const response = await axios.get(`http://localhost:8080/api/announcements/${this.id}` /*, { headers }*/);
+        const response = await apiClient.get(`/api/announcements/${this.id}` /*);
         this.announcement = response.data;
         console.log('Fetched announcement detail:', this.announcement);
       } catch (err) {
@@ -104,7 +104,7 @@ export default {
     //   }
     //   const headers = { 'Authorization': `Bearer ${token}` };
     //   try {
-    //     await axios.delete(`http://localhost:8080/api/announcements/${this.id}`, { headers });
+    //     await apiClient.delete(`http://localhost:8080/api/announcements/${this.id}`, { headers });
     //     alert("공지사항이 삭제되었습니다.");
     //     this.$router.push('/announcements');
     //   } catch (error) {
