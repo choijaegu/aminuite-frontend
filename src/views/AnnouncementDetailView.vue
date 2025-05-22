@@ -5,9 +5,9 @@
     </div>
     <div v-else-if="error" class="error-message">
       <p>{{ error }}</p>
-      <router-link to="/announcements" class="action-button-small">목록으로 돌아가기</router-link>
+      <router-link to="/announcements" class="action-button-small secondary">목록으로 돌아가기</router-link>
     </div>
-    <div v-else-if="announcement" class="announcement-content">
+    <div v-else-if="announcement" class="announcement-content-wrapper"> {/* 클래스명 변경 고려: announcement-content -> announcement-content-wrapper */}
       <div class="header-actions">
         <router-link to="/announcements" class="action-button-small secondary">목록으로</router-link>
         </div>
@@ -20,66 +20,70 @@
         </span>
       </div>
       <hr class="divider" />
-      <div class="content-body" v-html="formattedContent"></div>
+      <div class="content-body" v-html="formattedContent"></div> {/* formattedContent는 null 체크 후 반환하므로 안전 */}
     </div>
-    <div v-else>
-      <p>공지사항을 찾을 수 없습니다.</p>
-      <router-link to="/announcements" class="action-button-small">목록으로 돌아가기</router-link>
+    <div v-else class="no-data-message"> {/* 클래스명 추가 및 메시지 명확화 */}
+      <p>해당 ID의 공지사항을 찾을 수 없습니다.</p>
+      <router-link to="/announcements" class="action-button-small secondary">목록으로 돌아가기</router-link>
     </div>
   </div>
 </template>
 
 <script>
-import apiClient from '@/services/api';
+import apiClient from '@/services/api'; // axios 대신 apiClient 사용
 
 export default {
   name: 'AnnouncementDetailView',
   props: ['id'], // URL 파라미터로 전달된 공지사항 ID
   data() {
     return {
-      announcement: null,
+      announcement: null, // 초기값을 null로 명확히
       isLoading: true,
       error: null,
     };
   },
   computed: {
-    // 관리자 여부 (나중에 수정/삭제 버튼 표시에 사용)
-    // isUserAdmin() {
+    // isUserAdmin() { // 관리자 여부 (나중에 수정/삭제 버튼 표시에 사용)
     //   const rolesString = localStorage.getItem('userRoles');
     //   if (rolesString) {
     //     try {
     //       const roles = JSON.parse(rolesString);
     //       return roles.includes('ROLE_ADMIN');
-    //     } catch (e) { return false; }
+    //     } catch (e) {
+    //       console.error("Error parsing userRoles from localStorage in AnnouncementDetailView", e);
+    //       return false;
+    //     }
     //   }
     //   return false;
     // },
     formattedContent() {
-      // DB에 저장된 내용 중 \n (줄바꿈)을 <br> 태그로 변환하여 HTML에 표시
-      if (this.announcement && this.announcement.content) {
+      // this.announcement가 null이거나, this.announcement.content가 없을 경우 빈 문자열 반환
+      if (this.announcement && typeof this.announcement.content === 'string') {
         return this.announcement.content.replace(/\n/g, '<br />');
       }
-      return '';
+      return ''; // announcement가 null이거나 content가 없을 때 빈 문자열 반환
     }
   },
   methods: {
     async fetchAnnouncementDetail() {
       this.isLoading = true;
       this.error = null;
+      this.announcement = null; // 데이터를 새로 가져오기 전에 이전 데이터 초기화
+
       try {
-        // 공지사항 상세 API는 permitAll이므로 토큰은 필수는 아님
-        // const token = localStorage.getItem('userToken');
-        // const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-        const response = await apiClient.get(`/api/announcements/${this.id}` /*);
+        // 공지사항 상세 API는 SecurityConfig에서 GET /api/announcements/* 에 대해 permitAll()로 설정했으므로,
+        // apiClient의 요청 인터셉터가 토큰을 보내더라도 서버에서 인증을 요구하지 않습니다.
+        // 만약 이 경로가 인증을 요구한다면, apiClient 인터셉터가 자동으로 토큰을 추가해줍니다.
+        const response = await apiClient.get(`/api/announcements/${this.id}`);
         this.announcement = response.data;
         console.log('Fetched announcement detail:', this.announcement);
       } catch (err) {
         console.error("공지사항 상세 정보를 불러오는 중 오류 발생:", err.response || err.message || err);
         this.error = "공지사항 정보를 불러올 수 없습니다.";
         if (err.response) {
-          this.error += ` (오류: ${err.response.status} - ${err.response.data.message || err.response.statusText})`;
+          this.error += ` (오류: ${err.response.status} - ${err.response.data ? (err.response.data.message || JSON.stringify(err.response.data)) : err.response.statusText})`;
         }
-        this.announcement = null;
+        // this.announcement는 이미 null로 초기화됨
       } finally {
         this.isLoading = false;
       }
@@ -87,40 +91,24 @@ export default {
     formatDateTime(dateTimeString) {
       if (!dateTimeString) return '';
       const date = new Date(dateTimeString);
+      // 간단한 날짜 포맷팅, 필요시 toLocaleString 등 사용 가능
       return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     },
-    // confirmDelete() { // 나중에 삭제 기능 추가 시
-    //   if (window.confirm("정말로 이 공지사항을 삭제하시겠습니까?")) {
-    //     this.deleteAnnouncement();
-    //   }
-    // },
-    // async deleteAnnouncement() { // 나중에 삭제 기능 추가 시
-    //   this.isLoading = true;
-    //   const token = localStorage.getItem('userToken');
-    //   if (!token) {
-    //     alert("삭제 권한이 없습니다. 다시 로그인 해주세요.");
-    //     this.$router.push('/login');
-    //     return;
-    //   }
-    //   const headers = { 'Authorization': `Bearer ${token}` };
-    //   try {
-    //     await apiClient.delete(`http://localhost:8080/api/announcements/${this.id}`, { headers });
-    //     alert("공지사항이 삭제되었습니다.");
-    //     this.$router.push('/announcements');
-    //   } catch (error) {
-    //     console.error("공지사항 삭제 실패:", error.response || error.message);
-    //     this.error = "공지사항 삭제에 실패했습니다: " + (error.response?.data?.message || error.message);
-    //     this.isLoading = false;
-    //   }
-    // }
+    // confirmDelete() { ... } // 삭제 기능은 현재 주석 처리
+    // async deleteAnnouncement() { ... } // 삭제 기능은 현재 주석 처리
   },
   created() {
-    this.fetchAnnouncementDetail();
+    if (this.id) { // id prop이 있을 때만 데이터 가져오기
+        this.fetchAnnouncementDetail();
+    } else {
+        this.error = "공지사항 ID가 제공되지 않았습니다.";
+        this.isLoading = false;
+    }
   },
   watch: {
-    // 라우트 파라미터 'id'가 변경될 때 (예: 다른 공지사항으로 이동 시) 데이터를 다시 로드
-    id(newId) {
-      if (newId) {
+    // 라우트 파라미터 'id'가 변경될 때 (예: 브라우저 뒤로가기/앞으로가기로 다른 공지사항 상세로 이동 시) 데이터를 다시 로드
+    id(newId, oldId) {
+      if (newId && newId !== oldId) { // newId가 유효하고 이전 id와 다를 때만
         this.fetchAnnouncementDetail();
       }
     }
@@ -129,6 +117,7 @@ export default {
 </script>
 
 <style scoped>
+/* 스타일 부분은 이전 답변과 거의 동일합니다. */
 .announcement-detail-view {
   max-width: 800px;
   margin: 30px auto;
@@ -138,14 +127,23 @@ export default {
   background-color: #fff;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
+.announcement-content-wrapper { /* v-else-if="announcement" 블록에 적용할 클래스 */
+  /* 필요한 경우 여기에 스타일 추가 */
+}
+.no-data-message { /* 공지사항 없을 때 메시지 스타일 */
+  text-align: center;
+  padding: 20px;
+  font-style: italic;
+  color: #777;
+}
 .header-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: space-between; /* 목록으로 버튼과 관리자 버튼 영역 분리 */
   align-items: center;
   margin-bottom: 20px;
 }
 .admin-buttons button,
-.admin-buttons .action-button-small { /* router-link도 버튼처럼 보이게 */
+.admin-buttons .action-button-small {
   margin-left: 10px;
 }
 .title {
@@ -182,10 +180,17 @@ export default {
   padding: 20px;
   font-style: italic;
 }
-.error-message {
+.error-message { /* 오류 메시지 스타일 */
   color: red;
+  /* display: flex; */ /* 필요시 버튼과 함께 정렬 */
+  /* flex-direction: column; */
+  /* align-items: center; */
 }
-.action-button-small { /* 버튼 스타일 재사용 또는 공통화 */
+.error-message p {
+    margin-bottom: 10px;
+}
+
+.action-button-small {
   padding: 8px 15px;
   font-size: 0.9em;
   cursor: pointer;
@@ -194,20 +199,21 @@ export default {
   text-decoration: none;
   display: inline-block;
   color: white;
+  transition: background-color 0.2s;
 }
 .action-button-small.secondary {
-  background-color: #6c757d; /* 회색 계열 */
+  background-color: #6c757d;
 }
 .action-button-small.secondary:hover {
   background-color: #5a6268;
 }
-.action-button-small.primary { /* 수정 버튼용 */
+.action-button-small.primary {
   background-color: #007bff;
 }
 .action-button-small.primary:hover {
   background-color: #0056b3;
 }
-.action-button-small.danger { /* 삭제 버튼용 */
+.action-button-small.danger {
   background-color: #dc3545;
 }
 .action-button-small.danger:hover {
