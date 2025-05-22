@@ -81,7 +81,7 @@
 </template>
 
 <script>
-import apiClient from '@/services/api';
+import apiClient from '@/services/api'; // axios 대신 apiClient 임포트
 
 export default {
   name: 'HomeView',
@@ -90,7 +90,7 @@ export default {
       categories: [],
       loadingCategories: true,
       error: null,
-      currentScrolledCategoryId: null, // 현재 스크롤된 (또는 클릭된) 카테고리 ID 저장용
+      currentScrolledCategoryId: null,
     };
   },
   methods: {
@@ -98,7 +98,10 @@ export default {
       this.loadingCategories = true;
       this.error = null;
       try {
-        const token = localStorage.getItem('userToken');
+        // apiClient 인터셉터가 토큰을 자동으로 처리합니다.
+        // SecurityConfig에서 /api/categories (GET)가 permitAll()이면 토큰 없어도 성공,
+        // authenticated()이면 토큰이 없거나 유효하지 않을 시 인터셉터가 헤더를 안 보내거나,
+        // 또는 서버에서 401 응답을 받고 apiClient의 응답 인터셉터가 처리할 수 있습니다.
         const response = await apiClient.get('/api/categories');
 
         this.categories = response.data.map(category => ({
@@ -132,17 +135,14 @@ export default {
         this.loadingCategories = false;
       }
     },
-    // --- 카테고리 네비게이션 바 클릭 시 스크롤 이동을 위한 메소드 ---
     scrollToCategory(categoryId) {
-      this.currentScrolledCategoryId = categoryId; // 현재 활성화된 카테고리 ID 업데이트 (CSS 클래스 바인딩용)
+      this.currentScrolledCategoryId = categoryId;
       const element = document.getElementById('anchor-category-' + categoryId);
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-        // (선택 사항) 스크롤 후 해당 카테고리의 채팅방 목록을 자동으로 펼쳐주기
         const categoryObject = this.categories.find(c => c.categoryId === categoryId);
         if (categoryObject && !categoryObject.showingChatRooms && !categoryObject.loadingChatRooms) {
-          this.handleFetchChatRooms(categoryObject); // "채팅방 보기" 로직 호출
+          this.handleFetchChatRooms(categoryObject);
         }
       }
     },
@@ -150,14 +150,15 @@ export default {
       if (category.showingChatRooms && !category.loadingChatRooms) {
         category.showingChatRooms = false;
       } else if (!category.showingChatRooms && !category.loadingChatRooms) {
-        this.fetchChatRooms(category, 0); // 첫 페이지(0) 로드
+        this.fetchChatRooms(category, 0);
       }
     },
     async fetchChatRooms(category, page = 0) {
       category.loadingChatRooms = true;
       try {
-        const token = localStorage.getItem('userToken');
-        const headers = {};
+        // apiClient 인터셉터가 토큰을 자동으로 처리합니다.
+        // SecurityConfig에서 /api/categories/*/chatrooms (GET)가 permitAll()이면 토큰 없어도 성공.
+        // authenticated()이면 토큰 필요.
         const response = await apiClient.get(
           `/api/categories/${category.categoryId}/chatrooms`,
           {
@@ -178,7 +179,7 @@ export default {
         console.error(`채팅방 목록(page: ${page}, category: ${category.name})을 불러오는 중 오류 발생:`, err.response || err.message || err);
         alert(`${category.name} 카테고리의 채팅방 목록(페이지 ${page + 1})을 불러올 수 없습니다. (오류: ${err.response ? err.response.status : err.message})`);
         if (err.response && err.response.status === 401) {
-           // this.$router.push('/login');
+           // this.$router.push('/login'); // 필요시 로그인 페이지로
         }
         category.showingChatRooms = false;
       } finally {
@@ -209,12 +210,16 @@ export default {
         alert("채팅방 이름을 입력해주세요.");
         return;
       }
+      // 로그인 여부 확인 (토큰 유무로)
       const token = localStorage.getItem('userToken');
       if (!token) {
         alert("채팅방을 생성하려면 로그인이 필요합니다.");
         if (this.$router) this.$router.push('/login');
         return;
       }
+
+      // ownerUsername은 백엔드가 토큰에서 사용자 식별 시 payload에서 필요 없을 수 있음.
+      // 하지만 현재 백엔드 컨트롤러가 payload에서 ownerUsername을 기대하고 있으므로 포함.
       let ownerUsername = localStorage.getItem('chatUsername');
       if (!ownerUsername) {
           alert("오류: 사용자 닉네임 정보를 찾을 수 없습니다. 다시 로그인 해주세요.");
@@ -223,14 +228,17 @@ export default {
       }
       const payload = {
         name: category.newRoomName.trim(),
-        ownerUsername: ownerUsername,
+        ownerUsername: ownerUsername, // 백엔드가 여전히 요구한다면 이 값을 사용
       };
+
       console.log("채팅방 생성 요청 페이로드:", payload);
       try {
+        // apiClient 인터셉터가 자동으로 헤더에 토큰을 추가합니다.
         const response = await apiClient.post(
           `/api/categories/${category.categoryId}/chatrooms`,
-          payload
+          payload // headers 객체를 명시적으로 전달할 필요 없음
         );
+
         if (response.status === 201) {
           alert(`'${payload.name}' 채팅방이 성공적으로 생성되었습니다! (ID: ${response.data.roomId})`);
           this.fetchChatRooms(category, 0);
@@ -239,7 +247,6 @@ export default {
         }
       } catch (err) {
         console.error("채팅방 생성 중 오류 발생:", err.response || err.message || err);
-        // ... (기존 오류 처리 로직) ...
         if (err.response) {
           if (err.response.status === 401) {
             alert("채팅방 생성 권한이 없습니다. 로그인 상태를 확인해주세요.");
