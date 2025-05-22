@@ -30,7 +30,7 @@
     </nav>
 
     <div class="contact-info-bar">
-      잠깐! Aminute을 시작하기 전, 공지사항을 읽어주세요!
+      잠깐! Aminute을 시작하기 전, 공지사항을 읽어주세요!<br>
       문의사항은 <a href="mailto:magic753@naver.com">magic753@naver.com</a>으로 보내주세요.
     </div>
 
