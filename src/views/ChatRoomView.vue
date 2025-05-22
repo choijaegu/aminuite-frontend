@@ -73,9 +73,13 @@
 </template>
 
 <script>
+// 스크립트 부분은 이전 답변과 동일하게 유지합니다.
+// (name, props, data, computed: currentUsername, connectionStatusClass, webSocketUrl,
+//  methods: fetchRoomDetails, connect, disconnect, sendMessage, confirmKickUser, kickUser, startCooldown, clearCooldown,
+//  mounted, beforeUnmount)
 import SockJS from 'sockjs-client/dist/sockjs.min.js';
 import { Client as StompClient } from '@stomp/stompjs';
-import apiClient from '@/services/api'; // apiClient 임포트
+import apiClient from '@/services/api';
 
 const CHAT_COOLDOWN_DURATION_SECONDS = 5;
 
@@ -126,7 +130,6 @@ export default {
       }
       this.roomDetailsError = null;
       try {
-        // apiClient는 인터셉터에서 자동으로 헤더에 토큰을 추가합니다.
         const response = await apiClient.get(`/api/chatrooms/${this.roomId}`);
         if (response.data) {
           this.roomDisplayName = response.data.name || this.roomId;
@@ -151,7 +154,7 @@ export default {
       }
     },
     connect() {
-      const usernameToConnect = this.currentUsername; // 변수명 명확화
+      const usernameToConnect = this.currentUsername;
       console.log(`Attempting to connect to room: ${this.roomId} as ${usernameToConnect} via ${this.webSocketUrl}`);
       if (!this.roomId) { this.connectionStatus = "오류: 방 ID가 없습니다."; console.error("Room ID is not available."); return; }
       if (this.connecting || (this.stompClient && this.stompClient.active)) { console.log(this.connecting ? "이미 연결 시도 중입니다." : "이미 연결되어 있습니다."); return; }
@@ -160,7 +163,7 @@ export default {
       if (this.stompClient && typeof this.stompClient.deactivate === 'function') { this.stompClient.deactivate(); }
 
       const connectHeaders = {};
-      const token = localStorage.getItem('userToken'); // STOMP 연결 헤더에는 토큰 직접 추가
+      const token = localStorage.getItem('userToken');
       if (token) {
         connectHeaders['Authorization'] = `Bearer ${token}`;
       }
@@ -211,10 +214,9 @@ export default {
       this.stompClient.activate();
     },
     disconnect() {
-      // const usernameToUse = this.currentUsername; // 이 변수는 LEAVE 메시지 생성 시 this.currentUsername을 직접 사용하므로 불필요
       if (this.stompClient && this.stompClient.active) {
         const leaveMessage = {
-          sender: this.currentUsername, // this.currentUsername 직접 사용
+          sender: this.currentUsername,
           type: 'LEAVE',
           roomId: this.roomId,
           content: `${this.currentUsername} 님이 퇴장했습니다.`
@@ -237,15 +239,13 @@ export default {
     },
     sendMessage() {
       console.log('--- sendMessage called --- Current User:', this.currentUsername, 'Room Owner:', this.roomOwner, 'Is Owner?:', this.currentUsername === this.roomOwner, 'Cooldown Active?:', this.isCooldownActive);
-      // const usernameToUse = this.currentUsername; // 이 변수는 chatMessage.sender에 this.currentUsername을 직접 사용하므로 불필요
       if (this.isCooldownActive && this.currentUsername !== this.roomOwner) {
         alert(`${this.cooldownRemainingSeconds}초 후에 메시지를 보낼 수 있습니다.`);
         return;
       }
-
       if (this.newMessage.trim() && this.stompClient && this.stompClient.active) {
         const chatMessage = {
-          sender: this.currentUsername, // this.currentUsername 직접 사용
+          sender: this.currentUsername,
           content: this.newMessage,
           type: 'CHAT',
           roomId: this.roomId
@@ -272,13 +272,12 @@ export default {
         alert("강퇴 권한이 없습니다.");
         return;
       }
-      const token = localStorage.getItem('userToken'); // 로그인(인증) 여부 확인용
+      const token = localStorage.getItem('userToken');
       if (!token) {
         alert("인증 토큰이 없습니다. 다시 로그인 해주세요.");
         this.$router.push('/login');
         return;
       }
-      // apiClient는 인터셉터에서 자동으로 헤더에 토큰을 추가합니다.
       try {
         const response = await apiClient.post(
           `/api/chatrooms/${this.roomId}/admin/kick`,
@@ -336,71 +335,52 @@ export default {
 </script>
 
 <style scoped>
-/* 스타일 부분은 이전 답변과 동일하게 유지합니다. */
-/* ... (이전 전체 <style> 내용) ... */
+/* 기존 스타일들 */
 .chat-room-view {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 40px);
+  /* max-height를 100vh 또는 다른 값으로 변경하거나, 내부 요소들이 화면을 넘치지 않도록 조정 */
+  height: calc(100vh - 120px); /* 예시: 헤더, 네비게이션 등을 제외한 높이, 필요시 조정 */
   max-width: 900px;
-  min-width: 600px;
+  min-width: 320px; /* 모바일 최소 너비 고려 */
   margin: 20px auto;
   border: 1px solid #ccc;
   border-radius: 8px;
-  padding: 20px;
+  padding: 15px; /* 모바일에서는 패딩 약간 줄임 */
   box-shadow: 0 0 10px rgba(0,0,0,0.1);
   background-color: #fff;
+  overflow: hidden; /* 내부 스크롤은 각 영역에서 담당 */
 }
 .room-header {
   text-align: center;
   padding-bottom: 10px;
   border-bottom: 1px solid #eee;
   margin-bottom: 10px;
+  flex-shrink: 0; /* 헤더는 줄어들지 않도록 */
 }
-.room-header h1 { margin-top: 0; font-size: 1.5em; margin-bottom: 5px;}
-.room-header p { font-size: 0.85em; color: #666; margin: 2px 0; }
-.room-header p.room-meta {
-  font-size: 0.8em;
-  color: #888;
-  margin-bottom: 8px;
-}
-#status { font-weight: bold; margin-top: 5px; font-size: 0.9em; }
-.status-connected { color: green; }
-.status-disconnected { color: red; }
-.status-connecting { color: orange; }
-.current-username {
-  font-weight: normal;
-  color: #555;
-  font-size: 0.9em;
-}
-.user-count {
-  font-size: 0.85em;
-  color: #777;
-  margin-left: 5px;
-}
-.connect-button-container {
-  margin-top: 10px;
-}
+.room-header h1 { font-size: 1.3em; margin-bottom: 3px; } /* 모바일 폰트 크기 조정 */
+.room-header p { font-size: 0.8em; color: #666; margin: 2px 0; }
+#status { font-size: 0.85em; }
 
 .main-content-area {
   display: flex;
   flex-grow: 1;
-  overflow: hidden;
-  margin-top: 10px;
+  overflow: hidden; /* 중요: 이 영역이 넘치면 스크롤되도록 */
+  /* 모바일에서는 세로로 쌓이도록 아래 미디어 쿼리에서 flex-direction 변경 */
 }
 
 .chat-main-panel {
-  flex-grow: 3;
+  flex-grow: 1; /* 모바일에서는 채팅 패널이 주 공간 차지 */
   display: flex;
   flex-direction: column;
-  margin-right: 20px;
+  /* margin-right는 모바일에서 제거 (아래 미디어 쿼리) */
   overflow: hidden;
 }
 .chat-container {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: hidden; /* messages-area가 스크롤되도록 */
 }
 .messages-area {
   flex-grow: 1;
@@ -409,124 +389,91 @@ export default {
   padding: 10px;
   margin-bottom: 10px;
   background-color: #f9f9f9;
-  min-height: 300px;
+  min-height: 200px; /* 최소 높이 조정 */
 }
-.message {
-  margin-bottom: 8px; padding: 8px 12px; border-radius: 18px;
-  max-width: 90%; word-wrap: break-word; line-height: 1.4;
+.message { /* 메시지 스타일 약간 조정 */
+  margin-bottom: 6px; padding: 6px 10px;
+  max-width: 95%; /* 모바일에서 메시지 너비 조정 */
 }
-.message.my-message {
-  background-color: #DCF8C6; margin-left: auto; border-bottom-right-radius: 5px;
-}
-.message:not(.my-message) {
-  background-color: #E9E9EB; margin-right: auto; border-bottom-left-radius: 5px;
-}
-.message .sender {
-  font-weight: bold; display: block; font-size: 0.8em; color: #333; margin-bottom: 4px;
-}
-.message.system-message {
-  text-align: center; font-style: italic; color: #888; background-color: transparent;
-  font-size: 0.85em; width: 100%; max-width: 100%; padding: 5px 0;
-}
-.message.system-message .content { display: inline-block; }
+.message .sender { font-size: 0.75em; }
+
 
 .message-input-controls {
   padding-top: 10px;
   border-top: 1px solid #eee;
-}
-.message-input-area {
-  display: flex;
-  align-items: center;
+  flex-shrink: 0; /* 입력창은 줄어들지 않도록 */
 }
 .message-input-area input[type="text"] {
-  flex-grow: 1; padding: 10px 15px; border: 1px solid #ccc;
-  border-radius: 20px; margin-right: 10px; font-size: 1em;
-}
-.message-input-area input[type="text"]:disabled {
-  background-color: #f0f0f0;
-  cursor: not-allowed;
+  padding: 8px 12px; font-size: 0.9em; /* 입력창 크기 조정 */
 }
 .message-input-area button {
-  padding: 10px 20px; background-color: #007bff; color: white;
-  border: none; border-radius: 20px; cursor: pointer; font-size: 1em;
-  white-space: nowrap;
+  padding: 8px 15px; font-size: 0.9em; /* 버튼 크기 조정 */
 }
-.message-input-area button:hover { background-color: #0056b3; }
-.message-input-area button:disabled { background-color: #ccc; cursor: not-allowed; }
+.cooldown-message { font-size: 0.8em; }
 
-.cooldown-message {
-  font-size: 0.85em;
-  color: #dc3545;
-  margin-top: 8px;
-  text-align: right;
-  padding-right: 10px;
-  height: 1.2em;
-}
 
 .user-list-sidebar {
-  flex-grow: 1;
-  min-width: 180px;
-  max-width: 250px;
+  flex-grow: 1; /* 데스크탑에서 차지하는 비율 */
+  min-width: 180px; /* 데스크탑 최소 너비 */
+  max-width: 250px; /* 데스크탑 최대 너비 */
   border-left: 1px solid #e0e0e0;
   padding-left: 15px;
   overflow-y: auto;
   background-color: #fdfdfd;
-  height: 100%;
+  /* 모바일에서는 아래 미디어 쿼리에서 다르게 처리 */
 }
-.user-list-sidebar h4 {
-  margin-top: 0;
-  margin-bottom: 10px;
-  font-size: 1.1em;
-  color: #333;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 10px;
-}
-.user-list {
-  list-style-type: none;
-  padding: 0;
-}
-.user-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 0;
-  font-size: 0.95em;
-  color: #555;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-bottom: 1px dotted #f0f0f0;
-}
-.user-list li:last-child {
-    border-bottom: none;
-}
-.kick-button {
-  margin-left: 10px;
-  padding: 3px 8px;
-  font-size: 0.8em;
-  color: white;
-  background-color: #e74c3c;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.kick-button:hover {
-  background-color: #c0392b;
-}
+.user-list-sidebar h4 { font-size: 1em; }
+.user-list li { font-size: 0.9em; padding: 5px 0; }
+.kick-button { font-size: 0.75em; padding: 2px 6px; }
 
 .navigation-links {
-  margin-top: 20px;
+  margin-top: 15px; /* 간격 조정 */
   text-align: center;
-  padding-top: 15px;
+  padding-top: 10px;
   border-top: 1px solid #eee;
+  flex-shrink: 0;
 }
-.navigation-links a {
-  margin: 0 10px;
-  color: #007bff;
-  text-decoration: none;
-}
-.navigation-links a:hover {
-  text-decoration: underline;
+.navigation-links a { font-size: 0.9em; }
+
+
+/* --- 모바일 화면을 위한 미디어 쿼리 (예: 768px 이하) --- */
+@media (max-width: 768px) {
+  .chat-room-view {
+    padding: 10px;
+    margin: 10px;
+    height: calc(100vh - 80px); /* 헤더, 네비게이션 등을 고려한 높이 */
+  }
+  .room-header h1 { font-size: 1.2em; }
+  .room-header p { font-size: 0.75em; }
+  #status { font-size: 0.8em; }
+
+  .main-content-area {
+    flex-direction: column; /* 주 내용 영역을 세로로 쌓음 */
+  }
+
+  .chat-main-panel {
+    margin-right: 0; /* 오른쪽 마진 제거 */
+    margin-bottom: 15px; /* 사용자 목록과의 간격 */
+    /* flex-grow: 1; 이미 설정됨 */
+    min-height: 60vh; /* 최소 높이 확보 */
+  }
+
+  .user-list-sidebar {
+    border-left: none; /* 왼쪽 테두리 제거 */
+    border-top: 1px solid #e0e0e0; /* 위쪽 테두리 추가 */
+    padding-left: 0; /* 왼쪽 패딩 제거 */
+    padding-top: 10px; /* 위쪽 패딩 추가 */
+    max-height: 30vh; /* 모바일에서 사용자 목록 높이 제한 (스크롤) */
+    min-width: unset; /* 최소 너비 제한 해제 */
+    width: 100%; /* 너비 100% */
+    flex-grow: 0; /* 남은 공간을 채우지 않도록 */
+    flex-shrink: 1; /* 공간 부족 시 줄어들 수 있도록 */
+  }
+  .message-input-area input[type="text"] {
+    font-size: 1em; /* 모바일에서 입력 필드 폰트 크기 유지 또는 약간 키움 */
+  }
+  .message-input-area button {
+    font-size: 1em;
+  }
 }
 </style>
