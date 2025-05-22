@@ -111,13 +111,8 @@ export default {
       }
       return 'status-disconnected';
     },
-    // WebSocket 접속 URL을 환경 변수 또는 고정값으로 설정
     webSocketUrl() {
-      // process.env.VUE_APP_WEBSOCKET_URL 을 .env.production 또는 .env.development 파일에 정의할 수 있습니다.
-      // 예: VUE_APP_WEBSOCKET_URL=wss://aminuite-backend.onrender.com/ws (실제 WebSocket 프로토콜 wss://)
-      // SockJS는 http/https URL을 사용하므로, 백엔드 URL을 기반으로 만듭니다.
       const backendBaseUrl = process.env.VUE_APP_API_BASE_URL || 'http://localhost:8080';
-      // 만약 VUE_APP_API_BASE_URL이 https://로 시작하면, SockJS URL도 https://로 시작하게 됩니다.
       return `${backendBaseUrl}/ws`;
     }
   },
@@ -131,6 +126,7 @@ export default {
       }
       this.roomDetailsError = null;
       try {
+        // apiClient는 인터셉터에서 자동으로 헤더에 토큰을 추가합니다.
         const response = await apiClient.get(`/api/chatrooms/${this.roomId}`);
         if (response.data) {
           this.roomDisplayName = response.data.name || this.roomId;
@@ -155,8 +151,8 @@ export default {
       }
     },
     connect() {
-      const usernameToUse = this.currentUsername;
-      console.log(`Attempting to connect to room: ${this.roomId} as ${usernameToUse} via ${this.webSocketUrl}`); // 접속 URL 로그 추가
+      const usernameToConnect = this.currentUsername; // 변수명 명확화
+      console.log(`Attempting to connect to room: ${this.roomId} as ${usernameToConnect} via ${this.webSocketUrl}`);
       if (!this.roomId) { this.connectionStatus = "오류: 방 ID가 없습니다."; console.error("Room ID is not available."); return; }
       if (this.connecting || (this.stompClient && this.stompClient.active)) { console.log(this.connecting ? "이미 연결 시도 중입니다." : "이미 연결되어 있습니다."); return; }
 
@@ -164,14 +160,13 @@ export default {
       if (this.stompClient && typeof this.stompClient.deactivate === 'function') { this.stompClient.deactivate(); }
 
       const connectHeaders = {};
-      const token = localStorage.getItem('userToken');
+      const token = localStorage.getItem('userToken'); // STOMP 연결 헤더에는 토큰 직접 추가
       if (token) {
         connectHeaders['Authorization'] = `Bearer ${token}`;
       }
 
       this.stompClient = new StompClient({
-        // webSocketFactory: () => new SockJS('https://[내_백엔드_Render_서비스_URL]/ws'), // <<--- HTTPS로 변경!
-        webSocketFactory: () => new SockJS(this.webSocketUrl), // computed 속성 사용
+        webSocketFactory: () => new SockJS(this.webSocketUrl),
         connectHeaders: connectHeaders,
         debug: (str) => { console.log('STOMP DEBUG: ' + str); },
         reconnectDelay: 5000,
@@ -181,7 +176,7 @@ export default {
 
       this.stompClient.onConnect = (frame) => {
         this.connecting = false;
-        this.connectionStatus = `서버 연결 성공! (${usernameToUse} / ${this.roomDisplayName})`;
+        this.connectionStatus = `서버 연결 성공! (${usernameToConnect} / ${this.roomDisplayName})`;
         console.log('Connected to WebSocket: ' + frame);
 
         this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
@@ -198,7 +193,7 @@ export default {
            });
         });
 
-        this.stompClient.subscribe(`/user/${usernameToUse}/queue/private`, (messageOutput) => {
+        this.stompClient.subscribe(`/user/${usernameToConnect}/queue/private`, (messageOutput) => {
             const message = JSON.parse(messageOutput.body);
             console.log("Received private message:", message);
             if (message.type === 'KICK') {
@@ -208,7 +203,7 @@ export default {
             }
         });
 
-        const joinMessage = { sender: usernameToUse, type: 'JOIN', roomId: this.roomId, content: `${usernameToUse} 님이 입장했습니다.` };
+        const joinMessage = { sender: usernameToConnect, type: 'JOIN', roomId: this.roomId, content: `${usernameToConnect} 님이 입장했습니다.` };
         this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
       };
       this.stompClient.onStompError = (frame) => { this.connecting = false; this.connectionStatus = "STOMP 오류"; console.error('STOMP Error:', frame);};
@@ -216,47 +211,112 @@ export default {
       this.stompClient.activate();
     },
     disconnect() {
-      // ... (이전과 동일) ...
-      const usernameToUse = this.currentUsername;
-      if (this.stompClient && this.stompClient.active) { /* ... */ this.stompClient.deactivate(); }
-      // ... (나머지 초기화 로직)
-      this.connectionStatus = "연결 끊김."; console.log("STOMP client disconnected.");
-      this.connecting = false; this.currentRoomUsers = []; this.currentRoomUserCount = 0; this.clearCooldown();
+      // const usernameToUse = this.currentUsername; // 이 변수는 LEAVE 메시지 생성 시 this.currentUsername을 직접 사용하므로 불필요
+      if (this.stompClient && this.stompClient.active) {
+        const leaveMessage = {
+          sender: this.currentUsername, // this.currentUsername 직접 사용
+          type: 'LEAVE',
+          roomId: this.roomId,
+          content: `${this.currentUsername} 님이 퇴장했습니다.`
+        };
+        try {
+          this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(leaveMessage) });
+        } catch (e) {
+          console.warn("Failed to publish LEAVE message during disconnect", e);
+        }
+        this.stompClient.deactivate();
+      } else if (this.stompClient) {
+         try { this.stompClient.deactivate(); } catch(e) { /* Do nothing */ }
+      }
+      this.connectionStatus = "연결 끊김.";
+      console.log("STOMP client disconnected.");
+      this.connecting = false;
+      this.currentRoomUsers = [];
+      this.currentRoomUserCount = 0;
+      this.clearCooldown();
     },
     sendMessage() {
-      // ... (이전과 동일 - 방장 쿨다운 면제 로직 포함) ...
       console.log('--- sendMessage called --- Current User:', this.currentUsername, 'Room Owner:', this.roomOwner, 'Is Owner?:', this.currentUsername === this.roomOwner, 'Cooldown Active?:', this.isCooldownActive);
-      const usernameToUse = this.currentUsername;
-      if (this.isCooldownActive && this.currentUsername !== this.roomOwner) { /* ... */ return; }
+      // const usernameToUse = this.currentUsername; // 이 변수는 chatMessage.sender에 this.currentUsername을 직접 사용하므로 불필요
+      if (this.isCooldownActive && this.currentUsername !== this.roomOwner) {
+        alert(`${this.cooldownRemainingSeconds}초 후에 메시지를 보낼 수 있습니다.`);
+        return;
+      }
+
       if (this.newMessage.trim() && this.stompClient && this.stompClient.active) {
-        const chatMessage = { sender: usernameToUse, content: this.newMessage, type: 'CHAT', roomId: this.roomId };
-        this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(chatMessage) });
+        const chatMessage = {
+          sender: this.currentUsername, // this.currentUsername 직접 사용
+          content: this.newMessage,
+          type: 'CHAT',
+          roomId: this.roomId
+        };
+        this.stompClient.publish({
+          destination: `/app/chat.sendMessage/${this.roomId}`,
+          body: JSON.stringify(chatMessage)
+        });
         this.newMessage = '';
-        if (this.currentUsername !== this.roomOwner) { this.startCooldown(); }
-      } else if (!this.stompClient || !this.stompClient.active) { alert("먼저 채팅 서버에 연결해주세요."); }
+        if (this.currentUsername !== this.roomOwner) {
+          this.startCooldown();
+        }
+      } else if (!this.stompClient || !this.stompClient.active) {
+        alert("먼저 채팅 서버에 연결해주세요.");
+      }
     },
     confirmKickUser(usernameToKick) {
-      // ... (이전과 동일) ...
-      if (confirm(`정말로 '${usernameToKick}' 사용자를 이 방에서 강퇴하시겠습니까?`)) { this.kickUser(usernameToKick); }
+      if (confirm(`정말로 '${usernameToKick}' 사용자를 이 방에서 강퇴하시겠습니까?`)) {
+        this.kickUser(usernameToKick);
+      }
     },
     async kickUser(usernameToKick) {
-      // ... (이전과 동일 - apiClient 사용) ...
-      if (!this.currentUsername || this.currentUsername !== this.roomOwner) { /* ... */ return; }
-      const token = localStorage.getItem('userToken'); if (!token) { /* ... */ return; }
+      if (!this.currentUsername || this.currentUsername !== this.roomOwner) {
+        alert("강퇴 권한이 없습니다.");
+        return;
+      }
+      const token = localStorage.getItem('userToken'); // 로그인(인증) 여부 확인용
+      if (!token) {
+        alert("인증 토큰이 없습니다. 다시 로그인 해주세요.");
+        this.$router.push('/login');
+        return;
+      }
+      // apiClient는 인터셉터에서 자동으로 헤더에 토큰을 추가합니다.
       try {
-        const response = await apiClient.post(`/api/chatrooms/${this.roomId}/admin/kick`,{ usernameToKick: usernameToKick });
+        const response = await apiClient.post(
+          `/api/chatrooms/${this.roomId}/admin/kick`,
+          { usernameToKick: usernameToKick }
+        );
         alert(response.data);
-      } catch (error) { /* ... */ }
+      } catch (error) {
+        console.error("강퇴 API 호출 오류:", error.response || error.message || error);
+        if (error.response && error.response.data) {
+          let errorMessage = error.response.data;
+          if (typeof errorMessage === 'object' && errorMessage.message) {
+            errorMessage = errorMessage.message;
+          }
+          alert(`강퇴 실패: ${errorMessage}`);
+        } else if (error.request) {
+          alert("강퇴 요청 중 서버로부터 응답을 받지 못했습니다.");
+        } else {
+          alert("강퇴 요청 설정 중 오류가 발생했습니다.");
+        }
+      }
     },
     startCooldown() {
-      // ... (이전과 동일) ...
-      if (this.isCooldownActive) return; this.isCooldownActive = true; this.cooldownRemainingSeconds = CHAT_COOLDOWN_DURATION_SECONDS;
+      if (this.isCooldownActive) return;
+      this.isCooldownActive = true;
+      this.cooldownRemainingSeconds = CHAT_COOLDOWN_DURATION_SECONDS;
       if (this.cooldownTimer) { clearInterval(this.cooldownTimer); }
-      this.cooldownTimer = setInterval(() => { this.cooldownRemainingSeconds--; if (this.cooldownRemainingSeconds <= 0) { this.clearCooldown();}}, 1000);
+      this.cooldownTimer = setInterval(() => {
+        this.cooldownRemainingSeconds--;
+        if (this.cooldownRemainingSeconds <= 0) {
+          this.clearCooldown();
+        }
+      }, 1000);
     },
     clearCooldown() {
-      // ... (이전과 동일) ...
-      clearInterval(this.cooldownTimer); this.cooldownTimer = null; this.isCooldownActive = false; this.cooldownRemainingSeconds = 0;
+      clearInterval(this.cooldownTimer);
+      this.cooldownTimer = null;
+      this.isCooldownActive = false;
+      this.cooldownRemainingSeconds = 0;
     }
   },
   async mounted() {
