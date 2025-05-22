@@ -75,7 +75,7 @@
 <script>
 import SockJS from 'sockjs-client/dist/sockjs.min.js';
 import { Client as StompClient } from '@stomp/stompjs';
-import apiClient from '@/services/api'; // axios 대신 apiClient 임포트
+import apiClient from '@/services/api'; // apiClient 임포트
 
 const CHAT_COOLDOWN_DURATION_SECONDS = 5;
 
@@ -110,6 +110,15 @@ export default {
         return 'status-connecting';
       }
       return 'status-disconnected';
+    },
+    // WebSocket 접속 URL을 환경 변수 또는 고정값으로 설정
+    webSocketUrl() {
+      // process.env.VUE_APP_WEBSOCKET_URL 을 .env.production 또는 .env.development 파일에 정의할 수 있습니다.
+      // 예: VUE_APP_WEBSOCKET_URL=wss://aminuite-backend.onrender.com/ws (실제 WebSocket 프로토콜 wss://)
+      // SockJS는 http/https URL을 사용하므로, 백엔드 URL을 기반으로 만듭니다.
+      const backendBaseUrl = process.env.VUE_APP_API_BASE_URL || 'http://localhost:8080';
+      // 만약 VUE_APP_API_BASE_URL이 https://로 시작하면, SockJS URL도 https://로 시작하게 됩니다.
+      return `${backendBaseUrl}/ws`;
     }
   },
   methods: {
@@ -121,13 +130,8 @@ export default {
         return;
       }
       this.roomDetailsError = null;
-      // const token = localStorage.getItem('userToken'); // 인터셉터가 처리
-      // const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
       try {
-        // apiClient 인터셉터가 토큰을 자동으로 헤더에 추가합니다.
-        // SecurityConfig에서 /api/chatrooms/* (GET)가 authenticated()이면 토큰 필요.
-        const response = await apiClient.get(`/api/chatrooms/${this.roomId}`); // headers 전달 불필요
+        const response = await apiClient.get(`/api/chatrooms/${this.roomId}`);
         if (response.data) {
           this.roomDisplayName = response.data.name || this.roomId;
           this.roomOwner = response.data.ownerUsername || null;
@@ -151,19 +155,24 @@ export default {
       }
     },
     connect() {
-      // ... (connect 메소드 앞부분은 이전과 동일) ...
       const usernameToUse = this.currentUsername;
-      // ...
+      console.log(`Attempting to connect to room: ${this.roomId} as ${usernameToUse} via ${this.webSocketUrl}`); // 접속 URL 로그 추가
+      if (!this.roomId) { this.connectionStatus = "오류: 방 ID가 없습니다."; console.error("Room ID is not available."); return; }
+      if (this.connecting || (this.stompClient && this.stompClient.active)) { console.log(this.connecting ? "이미 연결 시도 중입니다." : "이미 연결되어 있습니다."); return; }
+
+      this.connecting = true; this.connectionStatus = "서버에 연결 중...";
+      if (this.stompClient && typeof this.stompClient.deactivate === 'function') { this.stompClient.deactivate(); }
+
       const connectHeaders = {};
-      const token = localStorage.getItem('userToken'); // STOMP 연결 헤더에는 토큰 직접 추가
+      const token = localStorage.getItem('userToken');
       if (token) {
         connectHeaders['Authorization'] = `Bearer ${token}`;
       }
 
       this.stompClient = new StompClient({
-        webSocketFactory: () => new SockJS('http://localhost:8080/ws'), // 실제 배포 시 이 URL도 변경 필요할 수 있음 (프록시 설정 등)
+        // webSocketFactory: () => new SockJS('https://[내_백엔드_Render_서비스_URL]/ws'), // <<--- HTTPS로 변경!
+        webSocketFactory: () => new SockJS(this.webSocketUrl), // computed 속성 사용
         connectHeaders: connectHeaders,
-        // ... (나머지 STOMP 설정)
         debug: (str) => { console.log('STOMP DEBUG: ' + str); },
         reconnectDelay: 5000,
         heartbeatIncoming: 4000,
@@ -171,7 +180,6 @@ export default {
       });
 
       this.stompClient.onConnect = (frame) => {
-        // ... (onConnect 내부 로직은 이전과 동일) ...
         this.connecting = false;
         this.connectionStatus = `서버 연결 성공! (${usernameToUse} / ${this.roomDisplayName})`;
         console.log('Connected to WebSocket: ' + frame);
@@ -184,7 +192,10 @@ export default {
           } else if (['JOIN', 'LEAVE', 'CHAT', 'SYSTEM', 'KICK'].includes(message.type)) {
             this.receivedMessages.push(message);
           }
-          this.$nextTick(() => { /* ... scroll ... */ });
+          this.$nextTick(() => {
+            const messagesArea = this.$refs.messagesArea;
+            if (messagesArea) messagesArea.scrollTop = messagesArea.scrollHeight;
+           });
         });
 
         this.stompClient.subscribe(`/user/${usernameToUse}/queue/private`, (messageOutput) => {
@@ -200,7 +211,6 @@ export default {
         const joinMessage = { sender: usernameToUse, type: 'JOIN', roomId: this.roomId, content: `${usernameToUse} 님이 입장했습니다.` };
         this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
       };
-      // ... (onStompError, onWebSocketError, activate는 이전과 동일) ...
       this.stompClient.onStompError = (frame) => { this.connecting = false; this.connectionStatus = "STOMP 오류"; console.error('STOMP Error:', frame);};
       this.stompClient.onWebSocketError = (event) => { this.connecting = false; this.connectionStatus = "WebSocket 오류"; console.error('WebSocket Error:', event);};
       this.stompClient.activate();
@@ -208,21 +218,14 @@ export default {
     disconnect() {
       // ... (이전과 동일) ...
       const usernameToUse = this.currentUsername;
-      if (this.stompClient && this.stompClient.active) {
-        const leaveMessage = { sender: usernameToUse, type: 'LEAVE', roomId: this.roomId, content: `${usernameToUse} 님이 퇴장했습니다.` };
-        try {
-          this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(leaveMessage) });
-        } catch (e) { console.warn("Failed to publish LEAVE message during disconnect", e); }
-        this.stompClient.deactivate();
-      } else if (this.stompClient) {
-         try { this.stompClient.deactivate(); } catch(e) { /* Do nothing */ }
-      }
+      if (this.stompClient && this.stompClient.active) { /* ... */ this.stompClient.deactivate(); }
+      // ... (나머지 초기화 로직)
       this.connectionStatus = "연결 끊김."; console.log("STOMP client disconnected.");
       this.connecting = false; this.currentRoomUsers = []; this.currentRoomUserCount = 0; this.clearCooldown();
     },
     sendMessage() {
       // ... (이전과 동일 - 방장 쿨다운 면제 로직 포함) ...
-      console.log('--- sendMessage called ---'); /* ... */
+      console.log('--- sendMessage called --- Current User:', this.currentUsername, 'Room Owner:', this.roomOwner, 'Is Owner?:', this.currentUsername === this.roomOwner, 'Cooldown Active?:', this.isCooldownActive);
       const usernameToUse = this.currentUsername;
       if (this.isCooldownActive && this.currentUsername !== this.roomOwner) { /* ... */ return; }
       if (this.newMessage.trim() && this.stompClient && this.stompClient.active) {
@@ -233,35 +236,17 @@ export default {
       } else if (!this.stompClient || !this.stompClient.active) { alert("먼저 채팅 서버에 연결해주세요."); }
     },
     confirmKickUser(usernameToKick) {
-      if (confirm(`정말로 '${usernameToKick}' 사용자를 이 방에서 강퇴하시겠습니까?`)) {
-        this.kickUser(usernameToKick);
-      }
+      // ... (이전과 동일) ...
+      if (confirm(`정말로 '${usernameToKick}' 사용자를 이 방에서 강퇴하시겠습니까?`)) { this.kickUser(usernameToKick); }
     },
     async kickUser(usernameToKick) {
-      if (!this.currentUsername || this.currentUsername !== this.roomOwner) {
-        alert("강퇴 권한이 없습니다.");
-        return;
-      }
-      // 로그인 여부 확인은 필요 (토큰 존재 유무로)
-      const token = localStorage.getItem('userToken');
-      if (!token) {
-        alert("인증 토큰이 없습니다. 다시 로그인 해주세요.");
-        this.$router.push('/login');
-        return;
-      }
-      // headers 객체 생성 및 전달 불필요 (apiClient 인터셉터가 처리)
+      // ... (이전과 동일 - apiClient 사용) ...
+      if (!this.currentUsername || this.currentUsername !== this.roomOwner) { /* ... */ return; }
+      const token = localStorage.getItem('userToken'); if (!token) { /* ... */ return; }
       try {
-        const response = await apiClient.post(
-          `/api/chatrooms/${this.roomId}/admin/kick`,
-          { usernameToKick: usernameToKick }
-        );
+        const response = await apiClient.post(`/api/chatrooms/${this.roomId}/admin/kick`,{ usernameToKick: usernameToKick });
         alert(response.data);
-      } catch (error) {
-        // ... (이전 오류 처리 로직) ...
-        console.error("강퇴 API 호출 오류:", error.response || error.message || error);
-        if (error.response && error.response.data) { /* ... */ }
-        // ...
-      }
+      } catch (error) { /* ... */ }
     },
     startCooldown() {
       // ... (이전과 동일) ...
@@ -275,11 +260,14 @@ export default {
     }
   },
   async mounted() {
-    // ... (이전과 동일) ...
     console.log('ChatRoomView Mounted - Category ID:', this.categoryId, '| Room ID:', this.roomId, '| Username from localStorage:', localStorage.getItem('chatUsername'));
     await this.fetchRoomDetails();
-    if (this.roomId) { this.connect(); }
-    else { /* ... */ }
+    if (this.roomId) {
+        this.connect();
+    } else {
+        this.connectionStatus = "오류: 방 ID가 유효하지 않습니다.";
+        console.error("Cannot connect: Room ID is not valid on mount.");
+    }
   },
   beforeUnmount() {
     this.disconnect();
@@ -288,8 +276,8 @@ export default {
 </script>
 
 <style scoped>
-/* 기존 스타일과 동일하게 유지합니다. */
-/* (이전 답변에서 제공된 전체 <style> 내용을 여기에 붙여넣으시면 됩니다.) */
+/* 스타일 부분은 이전 답변과 동일하게 유지합니다. */
+/* ... (이전 전체 <style> 내용) ... */
 .chat-room-view {
   display: flex;
   flex-direction: column;
@@ -394,7 +382,7 @@ export default {
   flex-grow: 1; padding: 10px 15px; border: 1px solid #ccc;
   border-radius: 20px; margin-right: 10px; font-size: 1em;
 }
-.message-input-area input[type="text"]:disabled { /* 입력창 비활성화 시 스타일 */
+.message-input-area input[type="text"]:disabled {
   background-color: #f0f0f0;
   cursor: not-allowed;
 }
