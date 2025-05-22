@@ -14,7 +14,7 @@
         <h3>{{ category.name }}</h3>
         <p class="category-description">{{ category.description }}</p>
 
-        <button @click="fetchChatRooms(category)" class="action-button">
+        <button @click="handleFetchChatRooms(category)" class="action-button">
           {{ category.showingChatRooms ? '채팅방 숨기기' : '채팅방 보기' }}
           <span v-if="category.loadingChatRooms"> (불러오는 중...)</span>
         </button>
@@ -28,17 +28,37 @@
           이 카테고리에 새 채팅방 만들기
         </button>
 
-        <ul v-if="category.showingChatRooms && category.chatRooms && category.chatRooms.length > 0" class="chatroom-list">
-          <li v-for="room in category.chatRooms" :key="room.roomId" class="chatroom-item">
-            <a :href="`/category/${category.categoryId}/room/${room.roomId}`" @click.prevent="goToChatRoom(category.categoryId, room.roomId)">
-              {{ room.name }}
-              <span v-if="room.currentUserCount !== undefined" class="room-user-count"> ({{ room.currentUserCount }}명)</span>
-            </a>
-          </li>
-        </ul>
-        <p v-if="category.showingChatRooms && (!category.chatRooms || category.chatRooms.length === 0) && !category.loadingChatRooms" class="no-rooms-message">
-          이 카테고리에는 아직 채팅방이 없습니다.
-        </p>
+        <div v-if="category.showingChatRooms">
+          <ul v-if="category.chatRooms && category.chatRooms.length > 0" class="chatroom-list">
+            <li v-for="room in category.chatRooms" :key="room.roomId" class="chatroom-item">
+              <a :href="`/category/${category.categoryId}/room/${room.roomId}`" @click.prevent="goToChatRoom(category.categoryId, room.roomId)">
+                {{ room.name }}
+                <span v-if="room.currentUserCount !== undefined" class="room-user-count"> ({{ room.currentUserCount }}명)</span>
+              </a>
+            </li>
+          </ul>
+          <p v-if="category.chatRooms && category.chatRooms.length === 0 && !category.loadingChatRooms" class="no-rooms-message">
+            이 카테고리에는 아직 채팅방이 없습니다.
+          </p>
+
+          <div v-if="category.chatRoomsTotalPages > 1" class="pagination-controls">
+            <button
+              @click="changeChatRoomPage(category, category.chatRoomsCurrentPage - 1)"
+              :disabled="category.chatRoomsCurrentPage === 0 || category.loadingChatRooms"
+              class="action-button-small primary">
+              이전
+            </button>
+            <span>
+              페이지 {{ category.chatRoomsCurrentPage + 1 }} / {{ category.chatRoomsTotalPages }}
+            </span>
+            <button
+              @click="changeChatRoomPage(category, category.chatRoomsCurrentPage + 1)"
+              :disabled="category.chatRoomsCurrentPage >= category.chatRoomsTotalPages - 1 || category.loadingChatRooms"
+              class="action-button-small primary">
+              다음
+            </button>
+          </div>
+        </div>
       </li>
     </ul>
     <p v-else class="no-categories-message">
@@ -48,9 +68,6 @@
 </template>
 
 <script>
-// <script> 부분은 이전 최종본과 동일하게 유지합니다. (fetchCategories, fetchChatRooms 등)
-// 단, fetchChatRooms 응답으로 오는 각 room 객체에 currentUserCount가 포함되어 있다고 가정합니다.
-// 만약 백엔드가 아직 이 정보를 주지 않는다면, currentUserCount는 undefined가 되어 화면에 표시되지 않을 것입니다.
 import axios from 'axios';
 
 export default {
@@ -59,7 +76,7 @@ export default {
     return {
       categories: [],
       loadingCategories: true,
-      error: null
+      error: null,
     };
   },
   methods: {
@@ -67,61 +84,90 @@ export default {
       this.loadingCategories = true;
       this.error = null;
       try {
-        const response = await axios.get('http://localhost:8080/api/categories');
+        const token = localStorage.getItem('userToken');
+        const headers = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const response = await axios.get('http://localhost:8080/api/categories', { headers });
+
         this.categories = response.data.map(category => ({
           ...category,
-          // chatRooms: category.chatRooms || [], // category.chatRooms는 이제 fetchChatRooms에서 가져옴
-          chatRooms: [], // 초기에는 빈 배열, fetchChatRooms 호출 시 채워짐
+          chatRooms: [],
           showingChatRooms: false,
           loadingChatRooms: false,
           showingCreateForm: false,
-          newRoomName: ''
+          newRoomName: '',
+          chatRoomsCurrentPage: 0,
+          chatRoomsTotalPages: 0,
+          chatRoomsPageSize: 5,
+          chatRoomsTotalElements: 0,
         }));
         console.log('Fetched categories:', this.categories);
       } catch (err) {
-        console.error("카테고리 목록을 불러오는 중 오류 발생:", err);
+        console.error("카테고리 목록을 불러오는 중 오류 발생:", err.response || err.message || err);
         this.error = "카테고리 목록을 불러올 수 없습니다.";
-        if (err.response) { this.error += ` (서버 응답: ${err.response.status} ${err.response.statusText})`; }
-        else if (err.request) { this.error += " (서버 응답 없음)"; }
-        else { this.error += ` (요청 설정 오류)`; }
+        if (err.response) {
+          this.error += ` (서버 응답: ${err.response.status} ${err.response.statusText})`;
+          if (err.response.status === 401) {
+            this.error += " - 로그인이 필요합니다.";
+          }
+        } else if (err.request) {
+          this.error += " (서버 응답 없음)";
+        } else {
+          this.error += ` (요청 설정 오류)`;
+        }
         this.categories = [];
       } finally {
         this.loadingCategories = false;
       }
     },
-    async fetchChatRooms(category) {
-      if (category.loadingChatRooms) return;
-      if (category.showingChatRooms && !category.showingCreateForm) {
+    handleFetchChatRooms(category) {
+      if (category.showingChatRooms && !category.loadingChatRooms) {
         category.showingChatRooms = false;
-        return;
+      } else if (!category.showingChatRooms && !category.loadingChatRooms) {
+        this.fetchChatRooms(category, 0);
       }
-      if (category.showingCreateForm) {
-        category.showingCreateForm = false;
-      }
+    },
+    async fetchChatRooms(category, page = 0) {
       category.loadingChatRooms = true;
-      this.error = null;
       try {
-        // 이 API 응답의 각 room 객체에 currentUserCount가 포함되어야 합니다.
-        const response = await axios.get(`http://localhost:8080/api/categories/${category.categoryId}/chatrooms`);
-        const categoryInOurList = this.categories.find(c => c.categoryId === category.categoryId);
-        if (categoryInOurList) {
-            categoryInOurList.chatRooms = response.data; // response.data가 ChatRoom[] 형태여야 함
-            categoryInOurList.showingChatRooms = true;
+        const token = localStorage.getItem('userToken');
+        const headers = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
         }
-        console.log(`Workspaceed chat rooms for ${category.categoryId}:`, response.data);
+        const response = await axios.get(
+          `http://localhost:8080/api/categories/${category.categoryId}/chatrooms`,
+          {
+            headers: headers,
+            params: {
+              page: page,
+              size: category.chatRoomsPageSize,
+              sort: 'createdAt,desc'
+            }
+          }
+        );
+        category.chatRooms = response.data.content;
+        category.chatRoomsCurrentPage = response.data.number;
+        category.chatRoomsTotalPages = response.data.totalPages;
+        category.chatRoomsTotalElements = response.data.totalElements;
+        category.showingChatRooms = true;
+        console.log(`Workspaceed page ${page} for category ${category.name}:`, response.data);
       } catch (err) {
-        console.error(`채팅방 목록(${category.categoryId})을 불러오는 중 오류 발생:`, err);
-        this.error = `${category.name} 카테고리의 채팅방 목록을 불러올 수 없습니다.`;
-        const categoryInOurList = this.categories.find(c => c.categoryId === category.categoryId);
-        if (categoryInOurList) {
-            categoryInOurList.chatRooms = [];
-            categoryInOurList.showingChatRooms = false;
+        console.error(`채팅방 목록(page: ${page}, category: ${category.name})을 불러오는 중 오류 발생:`, err.response || err.message || err);
+        alert(`${category.name} 카테고리의 채팅방 목록(페이지 ${page + 1})을 불러올 수 없습니다. (오류: ${err.response ? err.response.status : err.message})`);
+        if (err.response && err.response.status === 401) {
+           // this.$router.push('/login');
         }
+        category.showingChatRooms = false;
       } finally {
-        const categoryInOurList = this.categories.find(c => c.categoryId === category.categoryId);
-        if (categoryInOurList) {
-            categoryInOurList.loadingChatRooms = false;
-        }
+        category.loadingChatRooms = false;
+      }
+    },
+    changeChatRoomPage(category, newPage) {
+      if (newPage >= 0 && newPage < category.chatRoomsTotalPages && !category.loadingChatRooms) {
+        this.fetchChatRooms(category, newPage);
       }
     },
     goToChatRoom(categoryId, roomId) {
@@ -143,36 +189,68 @@ export default {
         alert("채팅방 이름을 입력해주세요.");
         return;
       }
-      const ownerUsername = localStorage.getItem('chatUsername') || "익명사용자";
+      const token = localStorage.getItem('userToken');
+      if (!token) {
+        alert("채팅방을 생성하려면 로그인이 필요합니다.");
+        if (this.$router) this.$router.push('/login');
+        return;
+      }
+
+      // localStorage에서 로그인 시 저장된 사용자 이름(방장 정보)을 가져옵니다.
+      let ownerUsername = localStorage.getItem('chatUsername');
+
+      // ownerUsername이 실제로 존재하는지, 비어있지 않은지 확인합니다.
+      if (!ownerUsername) {
+          alert("오류: 방 생성자 닉네임 정보를 찾을 수 없습니다. 다시 로그인 해주세요.");
+          // 이 문제가 발생한다면, LoginView.vue에서 로그인 성공 시
+          // localStorage.setItem('chatUsername', response.data.username); 코드가
+          // 정상적으로 실행되었는지 확인해야 합니다.
+          if (this.$router) this.$router.push('/login');
+          return;
+      }
+
+      // payload 객체에 name과 ownerUsername을 모두 포함시킵니다.
       const payload = {
         name: category.newRoomName.trim(),
-        ownerUsername: ownerUsername
+        ownerUsername: ownerUsername // <<--- 이 부분이 백엔드 요구사항에 맞게 포함되도록 수정!
       };
 
+      const headers = {
+        'Authorization': `Bearer ${token}`
+      };
+
+      console.log("채팅방 생성 요청 페이로드:", payload); // 실제로 보내는 payload 확인용 로그
+
       try {
-        const response = await axios.post(`http://localhost:8080/api/categories/${category.categoryId}/chatrooms`, payload);
+        const response = await axios.post(
+          `http://localhost:8080/api/categories/${category.categoryId}/chatrooms`,
+          payload, // 수정된 payload 전달
+          { headers: headers }
+        );
 
         if (response.status === 201) {
           alert(`'${payload.name}' 채팅방이 성공적으로 생성되었습니다! (ID: ${response.data.roomId})`);
-
-          const categoryInOurList = this.categories.find(c => c.categoryId === category.categoryId);
-          if (categoryInOurList) {
-            if (!categoryInOurList.chatRooms) {
-              categoryInOurList.chatRooms = [];
-            }
-            categoryInOurList.chatRooms.push(response.data);
-            categoryInOurList.showingChatRooms = true;
-          }
-
+          this.fetchChatRooms(category, 0); // 목록 새로고침
           category.showingCreateForm = false;
           category.newRoomName = '';
         }
       } catch (err) {
-        console.error("채팅방 생성 중 오류 발생:", err);
-        if (err.response && err.response.data) {
-          alert(`채팅방 생성 실패: ${err.response.data}`);
+        console.error("채팅방 생성 중 오류 발생 (프론트엔드):", err.response || err.message || err);
+        if (err.response) {
+          if (err.response.status === 401) {
+            alert("채팅방 생성 권한이 없습니다. 로그인 상태를 확인해주세요.");
+            if (this.$router) this.$router.push('/login');
+          } else if (err.response.data) {
+            // 서버에서 오는 구체적인 400 오류 메시지 등을 여기서 확인할 수 있습니다.
+            const serverErrorMessage = (typeof err.response.data === 'string') ? err.response.data : (err.response.data.message || JSON.stringify(err.response.data));
+            alert(`채팅방 생성 실패: ${serverErrorMessage}`);
+          } else {
+            alert("채팅방 생성에 실패했습니다. 서버 오류를 확인하세요.");
+          }
+        } else if (err.request) {
+          alert("채팅방 생성 요청 중 서버로부터 응답을 받지 못했습니다.");
         } else {
-          alert("채팅방 생성에 실패했습니다. 서버 오류를 확인하세요.");
+          alert("채팅방 생성 요청 설정 중 오류가 발생했습니다.");
         }
       }
     }
@@ -184,10 +262,8 @@ export default {
 </script>
 
 <style scoped>
-/* HomeView.vue의 <style scoped> 부분은 이전 최종본과 동일하게 유지합니다.
-   채팅방 인원 수 표시에 대한 스타일만 추가합니다.
-*/
-/* ... (기존 스타일) ... */
+/* 기존 스타일과 동일하게 유지합니다. */
+/* ... (이전 답변에서 제공된 전체 <style> 내용을 여기에 붙여넣으시면 됩니다.) ... */
 .home {
   padding: 20px;
   max-width: 800px;
@@ -198,13 +274,6 @@ h1 {
   text-align: center;
   color: #2c3e50;
   margin-bottom: 30px;
-}
-h2 {
-  border-bottom: 2px solid #42b983;
-  padding-bottom: 10px;
-  margin-top: 40px;
-  margin-bottom: 20px;
-  color: #34495e;
 }
 .category-list {
   list-style-type: none;
@@ -235,6 +304,7 @@ h2 {
   border: none;
   border-radius: 4px;
   font-size: 0.9em;
+  margin-bottom: 10px;
 }
 .action-button:hover {
   background-color: #4cae4c;
@@ -263,19 +333,18 @@ h2 {
 .chatroom-item a {
   text-decoration: none;
   color: #337ab7;
-  display: flex; /* 인원 수와 이름 정렬을 위해 */
-  justify-content: space-between; /* 이름은 왼쪽, 인원수는 오른쪽 */
+  display: flex;
+  justify-content: space-between;
   align-items: center;
 }
 .chatroom-item a:hover {
   text-decoration: underline;
 }
-.room-user-count { /* 채팅방 인원 수 스타일 */
+.room-user-count {
   font-size: 0.85em;
   color: #888;
   margin-left: 10px;
 }
-
 .create-room-section {
   margin-top: 15px;
   padding: 15px;
@@ -304,14 +373,36 @@ h2 {
 }
 .action-button-small.primary {
   background-color: #007bff;
+  color: white;
 }
-.action-button-small.primary:hover {
+.action-button-small.primary:hover:not(:disabled) {
   background-color: #0056b3;
+}
+.action-button-small.primary:disabled {
+  background-color: #b0c4de;
+  color: #777777;
+  cursor: not-allowed;
 }
 .action-button-small.danger {
   background-color: #dc3545;
 }
-.action-button-small.danger:hover {
+.action-button-small.danger:hover:not(:disabled) {
   background-color: #c82333;
+}
+.action-button-small:disabled {
+  background-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+}
+.pagination-controls {
+  margin-top: 15px;
+  text-align: center;
+}
+.pagination-controls button {
+  margin: 0 5px;
+}
+.pagination-controls span {
+  margin: 0 10px;
+  vertical-align: middle;
 }
 </style>

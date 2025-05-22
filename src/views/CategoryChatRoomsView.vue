@@ -31,7 +31,7 @@ import axios from 'axios';
 
 export default {
   name: 'CategoryChatRoomsView',
-  props: ['categoryId'], // URL 파라미터로 categoryId를 받음
+  props: ['categoryId'],
   data() {
     return {
       chatRooms: [],
@@ -48,8 +48,25 @@ export default {
       }
       this.loadingChatRooms = true;
       this.error = null;
+
       try {
-        const response = await axios.get(`http://localhost:8080/api/categories/${this.categoryId}/chatrooms`);
+        const token = localStorage.getItem('userToken'); // 토큰 가져오기
+        const headers = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`; // 토큰이 있으면 헤더에 추가
+        } else {
+          // 토큰이 없다면 (비로그인 상태) 이 API를 호출하면 401 오류가 발생합니다.
+          // 필요하다면 로그인 페이지로 리다이렉트하거나 사용자에게 알림을 줄 수 있습니다.
+          console.warn("CategoryChatRoomsView: No token found, request might fail if auth is required.");
+          // alert("채팅방 목록을 보려면 로그인이 필요합니다.");
+          // this.$router.push('/login');
+          // return; // 여기서 실행을 중단할 수도 있습니다.
+        }
+
+        const response = await axios.get(
+          `http://localhost:8080/api/categories/${this.categoryId}/chatrooms`,
+          { headers: headers } // 헤더 전달!
+        );
         this.chatRooms = response.data;
         console.log(`Workspaceed chat rooms for category ${this.categoryId}:`, this.chatRooms);
       } catch (err) {
@@ -57,6 +74,11 @@ export default {
         this.error = `'${this.categoryId}' 카테고리의 채팅방 목록을 불러올 수 없습니다.`;
         if (err.response) {
           this.error += ` (서버 응답: ${err.response.status} ${err.response.statusText})`;
+          if (err.response.status === 401) { // 401 오류에 대한 구체적인 메시지
+            this.error += " - 로그인이 필요하거나 세션이 만료되었을 수 있습니다. 다시 로그인 해주세요.";
+            // 필요하다면 로그인 페이지로 강제 이동
+            // if (this.$router) this.$router.push('/login');
+          }
         } else if (err.request) {
           this.error += " (서버 응답 없음)";
         } else {
@@ -67,16 +89,15 @@ export default {
         this.loadingChatRooms = false;
       }
     },
-    formatSimpleDateTime(dateTimeString) { // 간단한 날짜/시간 포맷팅 함수
+    formatSimpleDateTime(dateTimeString) {
       if (!dateTimeString) return '';
       const date = new Date(dateTimeString);
-      // 예: YYYY. MM. DD. HH:mm
       return `${date.getFullYear()}. ${String(date.getMonth() + 1).padStart(2, '0')}. ${String(date.getDate()).padStart(2, '0')}. ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
   },
   mounted() {
     console.log('CategoryChatRoomsView Mounted - Category ID:', this.categoryId);
-    this.fetchChatRoomsForCategory(); // 컴포넌트가 마운트되면 해당 카테고리의 채팅방 목록을 불러옴
+    this.fetchChatRoomsForCategory();
   }
 }
 </script>
