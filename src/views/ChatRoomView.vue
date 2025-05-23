@@ -452,4 +452,55 @@ export default {
   /* 모바일에서는 이 스타일이 미디어쿼리로 덮어쓰여짐 */
 }
 .user-list-sidebar h4 { font-size: 1em; }
-.user-list li { font-size: 0.
+.user-list li { font-size: 0.9em; padding: 5px 0; }
+.kick-button { font-size: 0.75em; padding: 2px 6px; }
+
+.navigation-links {
+  margin-top: 15px;
+  text-align: center;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+  flex-shrink: 0;
+}
+.navigation-links a { font-size: 0.9em; }
+
+
+@media (max-width: 768px) {
+  .chat-room-view {
+    padding: 10px;
+    margin: 10px;
+    height: calc(100vh - 80px);
+  }
+  .room-header h1 { font-size: 1.2em; }
+  .room-header p { font-size: 0.75em; }
+  #status { font-size: 0.8em; }
+
+  .main-content-area {
+    flex-direction: column;
+  }
+
+  .chat-main-panel {
+    margin-right: 0;
+    margin-bottom: 15px;
+    min-height: 60vh;
+  }
+
+  .user-list-sidebar {
+    border-left: none;
+    border-top: 1px solid #e0e0e0;
+    padding-left: 0;
+    padding-top: 10px;
+    max-height: 30vh;
+    min-width: unset;
+    width: 100%;
+    flex-grow: 0;
+    flex-shrink: 1;
+  }
+  .message-input-area input[type="text"] {
+    font-size: 1em;
+  }
+  .message-input-area button {
+    font-size: 1em;
+  }
+}
+</style>
