@@ -101,7 +101,8 @@ export default {
   },
   computed: {
     currentUsername() {
-      return localStorage.getItem('chatUsername') || '익명사용자';
+      // 이 값은 STOMP 연결 시 사용자의 Principal 이름과 일치해야 합니다.
+      return localStorage.getItem('chatUsername') || null; // 익명 사용자보다는 null로 처리하여 로그인 유도
     },
     connectionStatusClass() {
       if (this.stompClient && this.stompClient.active) {
@@ -150,11 +151,14 @@ export default {
       }
     },
     connect() {
+      // this.currentUsername은 computed 속성이므로, 컴포넌트 인스턴스 생성 시 이미 값이 확정됩니다.
+      // 이 값은 STOMP 연결 시 사용자의 Principal 이름과 일치해야 합니다.
       const usernameForSubscription = this.currentUsername;
+
       if (!usernameForSubscription) {
-        console.error("ChatRoomView: Cannot connect to WebSocket. Username for subscription is missing.");
+        console.error("ChatRoomView: WebSocket 연결 불가. 사용자 이름(currentUsername)이 없습니다. 로그인 상태를 확인하세요.");
         alert("사용자 정보가 없어 채팅 서버에 연결할 수 없습니다. 다시 로그인 해주세요.");
-        this.$router.push('/login');
+        if (this.$router) this.$router.push('/login');
         return;
       }
 
@@ -170,7 +174,8 @@ export default {
       if (token) {
         connectHeaders['Authorization'] = `Bearer ${token}`;
       } else {
-        console.warn("ChatRoomView: No userToken found. Attempting unauthenticated WebSocket connection.");
+        console.warn("ChatRoomView: No userToken found. Attempting unauthenticated WebSocket connection. This will likely fail if server requires auth.");
+        // 인증되지 않은 연결을 시도. 백엔드 AuthChannelInterceptor에서 이를 거부하거나 처리.
       }
 
       this.stompClient = new StompClient({
@@ -186,8 +191,9 @@ export default {
         this.connecting = false;
         this.connectionStatus = `서버 연결 성공! (${usernameForSubscription} / ${this.roomDisplayName})`;
         console.log('ChatRoomView: Connected to WebSocket. Frame headers:', frame ? JSON.stringify(frame.headers) : 'No frame');
+        console.log('ChatRoomView: STOMP current user from connection (if available in headers):', frame && frame.headers ? frame.headers['user-name'] : 'N/A');
 
-        // 공용 메시지 채널 구독
+
         this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
           const message = JSON.parse(messageOutput.body);
           console.log(`ChatRoomView: Received public message on /topic/room/${this.roomId}`, message);
@@ -195,6 +201,7 @@ export default {
             this.currentRoomUsers = message.users ? [...message.users].sort() : [];
             this.currentRoomUserCount = message.userCount || 0;
           } else if (['JOIN', 'LEAVE', 'CHAT', 'SYSTEM', 'KICK'].includes(message.type)) {
+            // KICK 메시지도 우선 여기에 추가하여 공용 채널로 오는 내용(예: OOO님이 강퇴됨)을 볼 수 있도록 함
             this.receivedMessages.push(message);
           }
           this.$nextTick(() => {
@@ -203,25 +210,23 @@ export default {
            });
         });
 
-        // 사용자 개인 큐 구독 (STOMP 표준 사용자 목적지 구독 방식 시도)
-        // 서버에서 setUserDestinationPrefix("/user")가 설정되어 있다면,
-        // 클라이언트는 /user/queue/private 와 같이 구독하면 서버가 현재 사용자의 세션에 맞게 라우팅해줍니다.
+        // **중요**: 개인 큐 구독 경로 수정 시도
+        // STOMP 표준에 따르면 클라이언트는 "/user/queue/private" 와 같이 구독하고
+        // 서버는 현재 인증된 사용자의 세션으로 메시지를 라우팅합니다.
         const privateQueuePathForSubscribe = "/user/queue/private";
-        console.log(`ChatRoomView: Attempting to subscribe to user's private queue: ${privateQueuePathForSubscribe} (for user: ${usernameForSubscription})`);
+        const subscriptionId = `private-sub-for-${usernameForSubscription}-room-${this.roomId}`; // 고유한 구독 ID
+        console.log(`ChatRoomView: Attempting to subscribe to user's private queue: ${privateQueuePathForSubscribe} with subId: ${subscriptionId} (for user: ${usernameForSubscription})`);
+
         this.stompClient.subscribe(privateQueuePathForSubscribe, (messageOutput) => {
             const message = JSON.parse(messageOutput.body);
-            // 이 로그가 찍히는지 확인하는 것이 매우 중요합니다!
-            console.log("ChatRoomView: Received message on user's private queue", message); // 로그 메시지 명확화
+            console.log("ChatRoomView: Received message on user's private queue (" + privateQueuePathForSubscribe + ")", message);
             if (message.type === 'KICK') {
+                // 서버가 보낸 KICK 메시지의 content 필드에 강퇴 사유 또는 알림 메시지가 있을 것으로 기대
                 alert(message.content || `[${this.roomDisplayName || this.roomId}] 방에서 강퇴당하셨습니다.`);
-                this.disconnect();
-                this.$router.push('/');
+                this.disconnect(); // WebSocket 연결 종료
+                this.$router.push('/'); // 홈으로 이동
             }
-            // 다른 타입의 개인 메시지 처리 ...
-        },
-        // 구독에 고유 ID 부여 (선택 사항, 디버깅에 도움될 수 있음)
-        { id: `private-sub-for-${usernameForSubscription}-room-${this.roomId}` }
-        );
+        }, { id: subscriptionId }); // 구독 시 ID 명시
 
         const joinMessage = { sender: usernameForSubscription, type: 'JOIN', roomId: this.roomId, content: `${usernameForSubscription} 님이 입장했습니다.` };
         this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
@@ -236,6 +241,7 @@ export default {
         console.error('ChatRoomView: STOMP Error:', frame);
         this.connectionStatus = errorMessageText;
         alert(errorMessageText);
+        // this.disconnect(); // 오류 시 연결 정리
       };
 
       this.stompClient.onWebSocketError = (event) => {
@@ -243,6 +249,7 @@ export default {
         console.error('ChatRoomView: WebSocket Error:', event);
         this.connectionStatus = "WebSocket 연결 오류가 발생했습니다. 네트워크 또는 서버 상태를 확인해주세요.";
         alert(this.connectionStatus);
+        // this.disconnect(); // 오류 시 연결 정리
       };
       this.stompClient.activate();
     },
@@ -354,14 +361,16 @@ export default {
   },
   async mounted() {
     console.log('ChatRoomView Mounted - CID:', this.categoryId, '| RID:', this.roomId, '| User:', localStorage.getItem('chatUsername'));
-    await this.fetchRoomDetails();
-    if (this.roomId && this.currentUsername) {
+    await this.fetchRoomDetails(); // 방장 정보 등을 먼저 가져옴
+    if (this.roomId && this.currentUsername) { // currentUsername도 유효한지 확인 후 connect
         this.connect();
     } else {
         if(!this.roomId) this.connectionStatus = "오류: 방 ID가 유효하지 않습니다.";
-        if(!this.currentUsername) this.connectionStatus = "오류: 사용자 정보를 찾을 수 없습니다. 로그인 해주세요.";
+        if(!this.currentUsername) {
+          this.connectionStatus = "오류: 사용자 정보를 찾을 수 없습니다. 로그인 해주세요.";
+          if(this.$router) this.$router.push('/login'); // currentUsername이 없으면 로그인 페이지로 유도
+        }
         console.error("ChatRoomView: Cannot connect, Room ID or currentUsername is not valid on mount.");
-        if(!this.currentUsername && this.$router) this.$router.push('/login');
     }
   },
   beforeUnmount() {
@@ -409,10 +418,10 @@ export default {
   margin-top: 10px;
 }
 .chat-main-panel {
-  flex-grow: 3; /* 데스크탑에서는 사용자 목록보다 채팅 패널이 넓게 */
+  flex-grow: 3;
   display: flex;
   flex-direction: column;
-  margin-right: 15px; /* 데스크탑에서 사용자 목록과의 간격 */
+  margin-right: 15px;
   overflow: hidden;
 }
 .chat-container {
