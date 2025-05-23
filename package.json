@@ -5,7 +5,8 @@
   "scripts": {
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint"
+    "lint": "vue-cli-service lint",
+    "sitemap": "vue-cli-service sitemap"
   },
   "dependencies": {
     "@stomp/stompjs": "^7.1.1",
@@ -23,7 +24,8 @@
     "@vue/cli-plugin-eslint": "~5.0.0",
     "@vue/cli-service": "~5.0.0",
     "eslint": "^7.32.0",
-    "eslint-plugin-vue": "^8.0.3"
+    "eslint-plugin-vue": "^8.0.3",
+    "vue-cli-plugin-sitemap": "~2.3.0"
   },
   "eslintConfig": {
     "root": true,
