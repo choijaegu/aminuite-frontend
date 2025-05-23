@@ -187,6 +187,7 @@ export default {
         this.connectionStatus = `서버 연결 성공! (${usernameForSubscription} / ${this.roomDisplayName})`;
         console.log('ChatRoomView: Connected to WebSocket. Frame headers:', frame ? JSON.stringify(frame.headers) : 'No frame');
 
+        // 공용 메시지 채널 구독
         this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
           const message = JSON.parse(messageOutput.body);
           console.log(`ChatRoomView: Received public message on /topic/room/${this.roomId}`, message);
@@ -202,17 +203,25 @@ export default {
            });
         });
 
-        const privateQueuePath = `/user/${usernameForSubscription}/queue/private`;
-        console.log(`ChatRoomView: Subscribing to private queue: ${privateQueuePath}`);
-        this.stompClient.subscribe(privateQueuePath, (messageOutput) => {
+        // 사용자 개인 큐 구독 (STOMP 표준 사용자 목적지 구독 방식 시도)
+        // 서버에서 setUserDestinationPrefix("/user")가 설정되어 있다면,
+        // 클라이언트는 /user/queue/private 와 같이 구독하면 서버가 현재 사용자의 세션에 맞게 라우팅해줍니다.
+        const privateQueuePathForSubscribe = "/user/queue/private";
+        console.log(`ChatRoomView: Attempting to subscribe to user's private queue: ${privateQueuePathForSubscribe} (for user: ${usernameForSubscription})`);
+        this.stompClient.subscribe(privateQueuePathForSubscribe, (messageOutput) => {
             const message = JSON.parse(messageOutput.body);
-            console.log("ChatRoomView: Received private message on " + privateQueuePath, message);
+            // 이 로그가 찍히는지 확인하는 것이 매우 중요합니다!
+            console.log("ChatRoomView: Received message on user's private queue", message); // 로그 메시지 명확화
             if (message.type === 'KICK') {
                 alert(message.content || `[${this.roomDisplayName || this.roomId}] 방에서 강퇴당하셨습니다.`);
                 this.disconnect();
                 this.$router.push('/');
             }
-        });
+            // 다른 타입의 개인 메시지 처리 ...
+        },
+        // 구독에 고유 ID 부여 (선택 사항, 디버깅에 도움될 수 있음)
+        { id: `private-sub-for-${usernameForSubscription}-room-${this.roomId}` }
+        );
 
         const joinMessage = { sender: usernameForSubscription, type: 'JOIN', roomId: this.roomId, content: `${usernameForSubscription} 님이 입장했습니다.` };
         this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
@@ -439,150 +448,32 @@ export default {
   font-size: 0.85em; width: 100%; max-width: 100%; padding: 5px 0;
 }
 .message.system-message .content { display: inline-block; }
-
-.message-input-controls {
-  padding-top: 10px;
-  border-top: 1px solid #eee;
-  flex-shrink: 0;
-}
-.message-input-area {
-  display: flex;
-  align-items: center;
-}
-.message-input-area input[type="text"] {
-  flex-grow: 1; padding: 10px 15px; border: 1px solid #ccc;
-  border-radius: 20px; margin-right: 10px; font-size: 0.95em;
-}
-.message-input-area input[type="text"]:disabled {
-  background-color: #f0f0f0;
-  cursor: not-allowed;
-}
-.message-input-area button {
-  padding: 10px 18px; background-color: #007bff; color: white;
-  border: none; border-radius: 20px; cursor: pointer; font-size: 0.95em;
-  white-space: nowrap;
-}
+.message-input-controls { padding-top: 10px; border-top: 1px solid #eee; flex-shrink: 0; }
+.message-input-area { display: flex; align-items: center; }
+.message-input-area input[type="text"] { flex-grow: 1; padding: 10px 15px; border: 1px solid #ccc; border-radius: 20px; margin-right: 10px; font-size: 0.95em; }
+.message-input-area input[type="text"]:disabled { background-color: #f0f0f0; cursor: not-allowed; }
+.message-input-area button { padding: 10px 18px; background-color: #007bff; color: white; border: none; border-radius: 20px; cursor: pointer; font-size: 0.95em; white-space: nowrap; }
 .message-input-area button:hover:not(:disabled) { background-color: #0056b3; }
 .message-input-area button:disabled { background-color: #ccc; cursor: not-allowed; }
+.cooldown-message { font-size: 0.8em; color: #dc3545; margin-top: 8px; text-align: right; padding-right: 10px; height: 1.2em; }
+.user-list-sidebar { flex-basis: 200px; flex-shrink: 0; border-left: 1px solid #e0e0e0; padding-left: 15px; overflow-y: auto; background-color: #fdfdfd; height: 100%; }
+.user-list-sidebar h4 { margin-top: 0; margin-bottom: 10px; font-size: 1em; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+.user-list { list-style-type: none; padding: 0; }
+.user-list li { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 0.9em; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px dotted #f0f0f0; }
+.user-list li:last-child { border-bottom: none; }
+.kick-button { margin-left: 10px; padding: 2px 6px; font-size: 0.75em; color: white; background-color: #e74c3c; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;}
+.kick-button:hover { background-color: #c0392b; }
+.navigation-links { margin-top: 15px; text-align: center; padding-top: 10px; border-top: 1px solid #eee; flex-shrink: 0; }
+.navigation-links a { font-size: 0.9em; margin: 0 10px; color: #007bff; text-decoration: none; }
+.navigation-links a:hover { text-decoration: underline; }
 
-.cooldown-message {
-  font-size: 0.8em;
-  color: #dc3545;
-  margin-top: 8px;
-  text-align: right;
-  padding-right: 10px;
-  height: 1.2em;
-}
-
-.user-list-sidebar {
-  flex-basis: 200px;
-  flex-shrink: 0; /* 데스크탑에서는 줄어들지 않도록 */
-  border-left: 1px solid #e0e0e0;
-  padding-left: 15px;
-  overflow-y: auto;
-  background-color: #fdfdfd;
-  height: 100%;
-}
-.user-list-sidebar h4 {
-  margin-top: 0;
-  margin-bottom: 10px;
-  font-size: 1em;
-  color: #333;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 10px;
-}
-.user-list {
-  list-style-type: none;
-  padding: 0;
-}
-.user-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 5px 0;
-  font-size: 0.9em;
-  color: #555;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-bottom: 1px dotted #f0f0f0;
-}
-.user-list li:last-child {
-    border-bottom: none;
-}
-.kick-button {
-  margin-left: 10px;
-  padding: 2px 6px;
-  font-size: 0.75em;
-  color: white;
-  background-color: #e74c3c;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.kick-button:hover {
-  background-color: #c0392b;
-}
-
-.navigation-links {
-  margin-top: 15px;
-  text-align: center;
-  padding-top: 10px;
-  border-top: 1px solid #eee;
-  flex-shrink: 0;
-}
-.navigation-links a {
-  font-size: 0.9em;
-  margin: 0 10px;
-  color: #007bff;
-  text-decoration: none;
-}
-.navigation-links a:hover {
-  text-decoration: underline;
-}
-
-/* --- 모바일 화면을 위한 미디어 쿼리 (예: 768px 이하) --- */
 @media (max-width: 768px) {
-  .chat-room-view {
-    padding: 10px;
-    margin: 10px 5px;
-    height: calc(100vh - 70px);
-  }
-  .room-header h1 { font-size: 1.2em; }
-  .room-header p { font-size: 0.75em; }
-  #status { font-size: 0.8em; }
-
-  .main-content-area {
-    flex-direction: column;
-  }
-
-  .chat-main-panel {
-    margin-right: 0; /* 모바일에서는 오른쪽 마진 제거 */
-    margin-bottom: 10px;
-    min-height: 0; /* 모바일에서는 유동적으로 */
-    flex-grow: 1; /* 사용 가능한 공간 최대한 차지 */
-  }
-  .messages-area {
-    min-height: 150px; /* 모바일에서 최소 높이 더 줄임 */
-  }
-
-  .user-list-sidebar {
-    border-left: none;
-    border-top: 1px solid #e0e0e0;
-    padding-left: 0;
-    padding-top: 10px;
-    max-height: 200px;
-    min-width: unset; /* 최소 너비 제한 해제 */
-    width: 100%;
-    flex-basis: auto; /* 높이 자동 */
-    flex-grow: 0;   /* 더 이상 늘어나지 않도록 */
-    flex-shrink: 0; /* 공간 부족해도 줄어들지 않도록 (내용만큼만) */
-  }
-
-  .message-input-area input[type="text"],
-  .message-input-area button {
-    font-size: 1em; /* 모바일에서 입력 필드/버튼 가독성 위해 */
-  }
+  .chat-room-view { padding: 10px; margin: 10px 5px; height: calc(100vh - 70px); }
+  .room-header h1 { font-size: 1.2em; } .room-header p { font-size: 0.75em; } #status { font-size: 0.8em; }
+  .main-content-area { flex-direction: column; }
+  .chat-main-panel { margin-right: 0; margin-bottom: 10px; min-height: 0; flex-grow: 1; }
+  .messages-area { min-height: 150px; }
+  .user-list-sidebar { border-left: none; border-top: 1px solid #e0e0e0; padding-left: 0; padding-top: 10px; max-height: 200px; min-width: unset; width: 100%; flex-basis: auto; flex-grow: 0; flex-shrink: 0; }
+  .message-input-area input[type="text"], .message-input-area button { font-size: 1em; }
 }
 </style>
