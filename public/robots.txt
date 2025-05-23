@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+# Disallow: /admin/ # 만약 관리자 페이지 등 크롤링을 원치 않는 경로가 있다면 추가
+Sitemap: https://aminute.onrender.com/sitemap.xml # <<--- 이 줄 추가 또는 확인
