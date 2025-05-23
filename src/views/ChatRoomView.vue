@@ -130,14 +130,14 @@ export default {
         if (response.data) {
           this.roomDisplayName = response.data.name || this.roomId;
           this.roomOwner = response.data.ownerUsername || null;
-          console.log('Room details fetched. Name:', this.roomDisplayName, 'Owner:', this.roomOwner);
+          console.log('ChatRoomView: Room details fetched. Name:', this.roomDisplayName, 'Owner:', this.roomOwner);
         } else {
           this.roomDisplayName = this.roomId;
           this.roomOwner = null;
           this.roomDetailsError = `${this.roomId} 방 정보를 가져올 수 없습니다. (응답 데이터 없음)`;
         }
       } catch (err) {
-        console.error("방 정보 로드 오류:", err);
+        console.error("ChatRoomView: 방 정보 로드 오류:", err);
         this.roomDetailsError = `${this.roomId} 방 정보를 가져오는 중 오류 발생`;
         if (err.response) {
           this.roomDetailsError += ` (서버 응답: ${err.response.status})`;
@@ -150,10 +150,17 @@ export default {
       }
     },
     connect() {
-      const usernameToConnect = this.currentUsername;
-      console.log(`Attempting to connect to room: ${this.roomId} as ${usernameToConnect} via ${this.webSocketUrl}`);
-      if (!this.roomId) { this.connectionStatus = "오류: 방 ID가 없습니다."; console.error("Room ID is not available."); return; }
-      if (this.connecting || (this.stompClient && this.stompClient.active)) { console.log(this.connecting ? "이미 연결 시도 중입니다." : "이미 연결되어 있습니다."); return; }
+      const usernameForSubscription = this.currentUsername;
+      if (!usernameForSubscription) {
+        console.error("ChatRoomView: Cannot connect to WebSocket. Username for subscription is missing.");
+        alert("사용자 정보가 없어 채팅 서버에 연결할 수 없습니다. 다시 로그인 해주세요.");
+        this.$router.push('/login');
+        return;
+      }
+
+      console.log(`ChatRoomView: Attempting to connect to room: ${this.roomId} as ${usernameForSubscription} via ${this.webSocketUrl}`);
+      if (!this.roomId) { this.connectionStatus = "오류: 방 ID가 없습니다."; console.error("ChatRoomView: Room ID is not available."); return; }
+      if (this.connecting || (this.stompClient && this.stompClient.active)) { console.log("ChatRoomView:", this.connecting ? "이미 연결 시도 중입니다." : "이미 연결되어 있습니다."); return; }
 
       this.connecting = true; this.connectionStatus = "서버에 연결 중...";
       if (this.stompClient && typeof this.stompClient.deactivate === 'function') { this.stompClient.deactivate(); }
@@ -162,6 +169,8 @@ export default {
       const token = localStorage.getItem('userToken');
       if (token) {
         connectHeaders['Authorization'] = `Bearer ${token}`;
+      } else {
+        console.warn("ChatRoomView: No userToken found. Attempting unauthenticated WebSocket connection.");
       }
 
       this.stompClient = new StompClient({
@@ -175,12 +184,12 @@ export default {
 
       this.stompClient.onConnect = (frame) => {
         this.connecting = false;
-        this.connectionStatus = `서버 연결 성공! (${usernameToConnect} / ${this.roomDisplayName})`;
-        console.log('ChatRoomView: Connected to WebSocket: ' + JSON.stringify(frame));
+        this.connectionStatus = `서버 연결 성공! (${usernameForSubscription} / ${this.roomDisplayName})`;
+        console.log('ChatRoomView: Connected to WebSocket. Frame headers:', frame ? JSON.stringify(frame.headers) : 'No frame');
 
         this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
           const message = JSON.parse(messageOutput.body);
-          console.log('ChatRoomView: Received public message on /topic/room/' + this.roomId, message);
+          console.log(`ChatRoomView: Received public message on /topic/room/${this.roomId}`, message);
           if (message.type === 'USER_LIST_UPDATE') {
             this.currentRoomUsers = message.users ? [...message.users].sort() : [];
             this.currentRoomUserCount = message.userCount || 0;
@@ -193,31 +202,31 @@ export default {
            });
         });
 
-        const privateQueuePath = `/user/${usernameToConnect}/queue/private`;
+        const privateQueuePath = `/user/${usernameForSubscription}/queue/private`;
         console.log(`ChatRoomView: Subscribing to private queue: ${privateQueuePath}`);
         this.stompClient.subscribe(privateQueuePath, (messageOutput) => {
             const message = JSON.parse(messageOutput.body);
             console.log("ChatRoomView: Received private message on " + privateQueuePath, message);
             if (message.type === 'KICK') {
-                alert(message.content || `[${this.roomDisplayName}] 방에서 강퇴당하셨습니다.`);
+                alert(message.content || `[${this.roomDisplayName || this.roomId}] 방에서 강퇴당하셨습니다.`);
                 this.disconnect();
                 this.$router.push('/');
             }
         });
 
-        const joinMessage = { sender: usernameToConnect, type: 'JOIN', roomId: this.roomId, content: `${usernameToConnect} 님이 입장했습니다.` };
+        const joinMessage = { sender: usernameForSubscription, type: 'JOIN', roomId: this.roomId, content: `${usernameForSubscription} 님이 입장했습니다.` };
         this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
       };
 
       this.stompClient.onStompError = (frame) => {
         this.connecting = false;
-        let errorMessage = "STOMP 프로토콜 오류가 발생했습니다. 서버와의 연결을 확인해주세요.";
+        let errorMessageText = "STOMP 프로토콜 오류가 발생했습니다. 서버와의 연결을 확인해주세요.";
         if (frame && frame.headers && frame.headers.message) {
-            errorMessage += `\n서버 메시지: ${frame.headers.message}`;
+            errorMessageText += `\n서버 메시지: ${frame.headers.message}`;
         }
         console.error('ChatRoomView: STOMP Error:', frame);
-        this.connectionStatus = errorMessage;
-        alert(errorMessage);
+        this.connectionStatus = errorMessageText;
+        alert(errorMessageText);
       };
 
       this.stompClient.onWebSocketError = (event) => {
@@ -229,7 +238,7 @@ export default {
       this.stompClient.activate();
     },
     disconnect() {
-      if (this.stompClient && (this.stompClient.active || this.stompClient.connected)) { // active 또는 connected 상태일 때
+      if (this.stompClient && (this.stompClient.active || this.stompClient.connected)) {
         const leaveMessage = {
           sender: this.currentUsername,
           type: 'LEAVE',
@@ -241,10 +250,10 @@ export default {
              this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(leaveMessage) });
           }
         } catch (e) {
-          console.warn("Failed to publish LEAVE message during disconnect, connection might be already closing.", e);
+          console.warn("ChatRoomView: Failed to publish LEAVE message during disconnect, connection might be already closing.", e);
         }
         this.stompClient.deactivate();
-        console.log("STOMP client deactivated.");
+        console.log("ChatRoomView: STOMP client deactivated.");
       }
 
       this.connectionStatus = "연결 끊김.";
@@ -303,11 +312,11 @@ export default {
       } catch (error) {
         console.error("강퇴 API 호출 오류:", error.response || error.message || error);
         if (error.response && error.response.data) {
-          let errorMessage = error.response.data;
-          if (typeof errorMessage === 'object' && errorMessage.message) {
-            errorMessage = errorMessage.message;
+          let errorMessageText = error.response.data;
+          if (typeof errorMessageText === 'object' && errorMessageText.message) {
+            errorMessageText = errorMessageText.message;
           }
-          alert(`강퇴 실패: ${errorMessage}`);
+          alert(`강퇴 실패: ${errorMessageText}`);
         } else if (error.request) {
           alert("강퇴 요청 중 서버로부터 응답을 받지 못했습니다.");
         } else {
@@ -335,13 +344,15 @@ export default {
     }
   },
   async mounted() {
-    console.log('ChatRoomView Mounted - Category ID:', this.categoryId, '| Room ID:', this.roomId, '| Username from localStorage:', localStorage.getItem('chatUsername'));
+    console.log('ChatRoomView Mounted - CID:', this.categoryId, '| RID:', this.roomId, '| User:', localStorage.getItem('chatUsername'));
     await this.fetchRoomDetails();
-    if (this.roomId) {
+    if (this.roomId && this.currentUsername) {
         this.connect();
     } else {
-        this.connectionStatus = "오류: 방 ID가 유효하지 않습니다.";
-        console.error("ChatRoomView: Cannot connect, Room ID is not valid on mount.");
+        if(!this.roomId) this.connectionStatus = "오류: 방 ID가 유효하지 않습니다.";
+        if(!this.currentUsername) this.connectionStatus = "오류: 사용자 정보를 찾을 수 없습니다. 로그인 해주세요.";
+        console.error("ChatRoomView: Cannot connect, Room ID or currentUsername is not valid on mount.");
+        if(!this.currentUsername && this.$router) this.$router.push('/login');
     }
   },
   beforeUnmount() {
@@ -354,75 +365,46 @@ export default {
 .chat-room-view {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 120px); /* 전체 화면 높이에서 헤더/푸터 등을 제외한 값으로 조정 */
-  max-width: 900px; /* 데스크탑 최대 너비 */
-  min-width: 320px; /* 모바일 최소 너비 */
+  height: calc(100vh - 120px);
+  max-width: 900px;
+  min-width: 320px;
   margin: 20px auto;
   border: 1px solid #ccc;
   border-radius: 8px;
   padding: 15px;
   box-shadow: 0 0 10px rgba(0,0,0,0.1);
   background-color: #fff;
-  overflow: hidden; /* 중요: 내부 스크롤은 각 패널에서 담당 */
+  overflow: hidden;
 }
 .room-header {
   text-align: center;
   padding-bottom: 10px;
   border-bottom: 1px solid #eee;
   margin-bottom: 10px;
-  flex-shrink: 0; /* 크기가 줄어들지 않도록 */
+  flex-shrink: 0;
 }
-.room-header h1 {
-  font-size: 1.3em; /* 모바일/데스크탑 공통으로 약간 줄임 */
-  margin-top: 0;
-  margin-bottom: 3px;
-}
-.room-header p {
-  font-size: 0.8em;
-  color: #666;
-  margin: 2px 0;
-}
-.room-header p.room-meta {
-  font-size: 0.8em;
-  color: #888;
-  margin-bottom: 8px;
-}
-#status {
-  font-weight: bold;
-  margin-top: 5px;
-  font-size: 0.85em;
-}
+.room-header h1 { font-size: 1.3em; margin-top: 0; margin-bottom: 3px; }
+.room-header p { font-size: 0.8em; color: #666; margin: 2px 0; }
+.room-header p.room-meta { font-size: 0.8em; color: #888; margin-bottom: 8px; }
+#status { font-weight: bold; margin-top: 5px; font-size: 0.85em; }
 .status-connected { color: green; }
 .status-disconnected { color: red; }
 .status-connecting { color: orange; }
-
-.current-username {
-  font-weight: normal;
-  color: #555;
-  font-size: 0.9em; /* 기본값으로 사용 */
-}
-.user-count {
-  font-size: 0.85em;
-  color: #777;
-  margin-left: 5px;
-}
-.connect-button-container {
-  margin-top: 10px;
-}
-
+.current-username { font-weight: normal; color: #555; font-size: 0.9em; }
+.user-count { font-size: 0.85em; color: #777; margin-left: 5px; }
+.connect-button-container { margin-top: 10px; }
 .main-content-area {
   display: flex;
-  flex-grow: 1; /* 남은 공간을 모두 채움 */
-  overflow: hidden; /* 내부 스크롤을 위해 */
+  flex-grow: 1;
+  overflow: hidden;
   margin-top: 10px;
 }
-
 .chat-main-panel {
-  flex-grow: 3; /* 사용자 목록보다 넓은 비율 */
+  flex-grow: 3; /* 데스크탑에서는 사용자 목록보다 채팅 패널이 넓게 */
   display: flex;
   flex-direction: column;
   margin-right: 15px; /* 데스크탑에서 사용자 목록과의 간격 */
-  overflow: hidden; /* 내부 메시지 영역 스크롤은 messages-area에서 */
+  overflow: hidden;
 }
 .chat-container {
   flex-grow: 1;
@@ -432,51 +414,31 @@ export default {
 }
 .messages-area {
   flex-grow: 1;
-  overflow-y: auto; /* 메시지가 많아지면 스크롤 */
+  overflow-y: auto;
   border: 1px solid #e0e0e0;
   padding: 10px;
   margin-bottom: 10px;
   background-color: #f9f9f9;
-  min-height: 200px; /* 최소 높이, 실제로는 flex-grow로 늘어남 */
+  min-height: 200px;
 }
 .message {
-  margin-bottom: 8px;
-  padding: 6px 10px; /* 패딩 약간 조정 */
-  border-radius: 15px; /* 좀 더 둥글게 */
-  max-width: 85%; /* 메시지 최대 너비 약간 줄임 */
-  word-wrap: break-word;
-  line-height: 1.4;
+  margin-bottom: 8px; padding: 6px 10px; border-radius: 15px;
+  max-width: 85%; word-wrap: break-word; line-height: 1.4;
 }
 .message.my-message {
-  background-color: #DCF8C6;
-  margin-left: auto;
-  border-bottom-right-radius: 5px;
+  background-color: #DCF8C6; margin-left: auto; border-bottom-right-radius: 5px;
 }
 .message:not(.my-message) {
-  background-color: #E9E9EB;
-  margin-right: auto;
-  border-bottom-left-radius: 5px;
+  background-color: #E9E9EB; margin-right: auto; border-bottom-left-radius: 5px;
 }
 .message .sender {
-  font-weight: bold;
-  display: block;
-  font-size: 0.8em; /* 발신자 폰트 크기 통일 */
-  color: #333;
-  margin-bottom: 4px;
+  font-weight: bold; display: block; font-size: 0.8em; color: #333; margin-bottom: 4px;
 }
 .message.system-message {
-  text-align: center;
-  font-style: italic;
-  color: #888;
-  background-color: transparent;
-  font-size: 0.85em;
-  width: 100%;
-  max-width: 100%;
-  padding: 5px 0;
+  text-align: center; font-style: italic; color: #888; background-color: transparent;
+  font-size: 0.85em; width: 100%; max-width: 100%; padding: 5px 0;
 }
-.message.system-message .content {
-  display: inline-block;
-}
+.message.system-message .content { display: inline-block; }
 
 .message-input-controls {
   padding-top: 10px;
@@ -488,32 +450,23 @@ export default {
   align-items: center;
 }
 .message-input-area input[type="text"] {
-  flex-grow: 1;
-  padding: 10px 15px; /* 패딩 조정 */
-  border: 1px solid #ccc;
-  border-radius: 20px;
-  margin-right: 10px;
-  font-size: 0.95em; /* 폰트 크기 조정 */
+  flex-grow: 1; padding: 10px 15px; border: 1px solid #ccc;
+  border-radius: 20px; margin-right: 10px; font-size: 0.95em;
 }
 .message-input-area input[type="text"]:disabled {
   background-color: #f0f0f0;
   cursor: not-allowed;
 }
 .message-input-area button {
-  padding: 10px 18px; /* 패딩 조정 */
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 0.95em; /* 폰트 크기 조정 */
+  padding: 10px 18px; background-color: #007bff; color: white;
+  border: none; border-radius: 20px; cursor: pointer; font-size: 0.95em;
   white-space: nowrap;
 }
 .message-input-area button:hover:not(:disabled) { background-color: #0056b3; }
 .message-input-area button:disabled { background-color: #ccc; cursor: not-allowed; }
 
 .cooldown-message {
-  font-size: 0.8em; /* 폰트 크기 통일 */
+  font-size: 0.8em;
   color: #dc3545;
   margin-top: 8px;
   text-align: right;
@@ -522,8 +475,8 @@ export default {
 }
 
 .user-list-sidebar {
-  flex-basis: 200px; /* 기본 너비 (데스크탑) */
-  flex-shrink: 0; /* 줄어들지 않음 (데스크탑) */
+  flex-basis: 200px;
+  flex-shrink: 0; /* 데스크탑에서는 줄어들지 않도록 */
   border-left: 1px solid #e0e0e0;
   padding-left: 15px;
   overflow-y: auto;
@@ -533,7 +486,7 @@ export default {
 .user-list-sidebar h4 {
   margin-top: 0;
   margin-bottom: 10px;
-  font-size: 1em; /* 폰트 크기 통일 */
+  font-size: 1em;
   color: #333;
   border-bottom: 1px solid #eee;
   padding-bottom: 10px;
@@ -546,8 +499,8 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 5px 0; /* 패딩 약간 조정 */
-  font-size: 0.9em; /* 폰트 크기 통일 */
+  padding: 5px 0;
+  font-size: 0.9em;
   color: #555;
   white-space: nowrap;
   overflow: hidden;
@@ -559,8 +512,8 @@ export default {
 }
 .kick-button {
   margin-left: 10px;
-  padding: 2px 6px; /* 패딩 약간 조정 */
-  font-size: 0.75em; /* 폰트 크기 통일 */
+  padding: 2px 6px;
+  font-size: 0.75em;
   color: white;
   background-color: #e74c3c;
   border: none;
@@ -573,14 +526,14 @@ export default {
 }
 
 .navigation-links {
-  margin-top: 15px; /* 간격 조정 */
+  margin-top: 15px;
   text-align: center;
   padding-top: 10px;
   border-top: 1px solid #eee;
   flex-shrink: 0;
 }
 .navigation-links a {
-  font-size: 0.9em; /* 폰트 크기 통일 */
+  font-size: 0.9em;
   margin: 0 10px;
   color: #007bff;
   text-decoration: none;
@@ -589,13 +542,12 @@ export default {
   text-decoration: underline;
 }
 
-
 /* --- 모바일 화면을 위한 미디어 쿼리 (예: 768px 이하) --- */
 @media (max-width: 768px) {
   .chat-room-view {
     padding: 10px;
     margin: 10px 5px;
-    height: calc(100vh - 70px); /* 모바일 화면 높이에 맞게 재조정 */
+    height: calc(100vh - 70px);
   }
   .room-header h1 { font-size: 1.2em; }
   .room-header p { font-size: 0.75em; }
@@ -606,11 +558,10 @@ export default {
   }
 
   .chat-main-panel {
-    margin-right: 0;
-    margin-bottom: 10px; /* 사용자 목록과의 간격 */
-    min-height: 0; /* 모바일에서는 유동적으로, flex-grow로 늘어남 */
+    margin-right: 0; /* 모바일에서는 오른쪽 마진 제거 */
+    margin-bottom: 10px;
+    min-height: 0; /* 모바일에서는 유동적으로 */
     flex-grow: 1; /* 사용 가능한 공간 최대한 차지 */
-    /* order: 1; 이전 코드, 필요시 재활용 */
   }
   .messages-area {
     min-height: 150px; /* 모바일에서 최소 높이 더 줄임 */
@@ -621,18 +572,17 @@ export default {
     border-top: 1px solid #e0e0e0;
     padding-left: 0;
     padding-top: 10px;
-    max-height: 200px; /* 모바일에서 사용자 목록 높이 제한 (스크롤), 이전 30vh보다 구체적 */
-    min-width: unset;
+    max-height: 200px;
+    min-width: unset; /* 최소 너비 제한 해제 */
     width: 100%;
-    flex-basis: auto;
-    flex-grow: 0; /* 더 이상 늘어나지 않도록 */
-    flex-shrink: 0; /* 줄어들지도 않도록, 내용만큼만 */
-    /* order: 2; 이전 코드, 필요시 재활용 */
+    flex-basis: auto; /* 높이 자동 */
+    flex-grow: 0;   /* 더 이상 늘어나지 않도록 */
+    flex-shrink: 0; /* 공간 부족해도 줄어들지 않도록 (내용만큼만) */
   }
 
   .message-input-area input[type="text"],
   .message-input-area button {
-    font-size: 1em; /* 모바일에서 입력 필드/버튼 가독성 위해 폰트 유지 또는 약간 키움 */
+    font-size: 1em; /* 모바일에서 입력 필드/버튼 가독성 위해 */
   }
 }
 </style>
