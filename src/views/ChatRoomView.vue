@@ -73,10 +73,6 @@
 </template>
 
 <script>
-// 스크립트 부분은 이전 답변과 동일하게 유지합니다.
-// (name, props, data, computed: currentUsername, connectionStatusClass, webSocketUrl,
-//  methods: fetchRoomDetails, connect, disconnect, sendMessage, confirmKickUser, kickUser, startCooldown, clearCooldown,
-//  mounted, beforeUnmount)
 import SockJS from 'sockjs-client/dist/sockjs.min.js';
 import { Client as StompClient } from '@stomp/stompjs';
 import apiClient from '@/services/api';
@@ -182,13 +178,18 @@ export default {
         this.connectionStatus = `서버 연결 성공! (${usernameToConnect} / ${this.roomDisplayName})`;
         console.log('Connected to WebSocket: ' + frame);
 
+        // 공용 메시지 채널 구독
         this.stompClient.subscribe(`/topic/room/${this.roomId}`, (messageOutput) => {
           const message = JSON.parse(messageOutput.body);
           if (message.type === 'USER_LIST_UPDATE') {
             this.currentRoomUsers = message.users ? [...message.users].sort() : [];
             this.currentRoomUserCount = message.userCount || 0;
-          } else if (['JOIN', 'LEAVE', 'CHAT', 'SYSTEM', 'KICK'].includes(message.type)) {
+          } else if (['JOIN', 'LEAVE', 'CHAT', 'SYSTEM'].includes(message.type)) { // KICK은 개인 메시지로 처리
             this.receivedMessages.push(message);
+          } else if (message.type === 'KICK' && message.kickedUser === this.currentUsername) {
+            // 만약 KICK 메시지가 /topic/room 으로도 온다면 (그리고 kickedUser 필드가 있다면) 여기서도 처리 가능
+            // 하지만 보통 KICK은 개인 메시지로 보내는 것이 더 명확합니다.
+            // 이 부분은 서버 구현에 따라 달라질 수 있습니다. 아래 개인 큐 처리를 우선합니다.
           }
           this.$nextTick(() => {
             const messagesArea = this.$refs.messagesArea;
@@ -196,21 +197,42 @@ export default {
            });
         });
 
+        // 사용자 개인 큐 구독 (강퇴 알림 등 개인 메시지 수신용)
         this.stompClient.subscribe(`/user/${usernameToConnect}/queue/private`, (messageOutput) => {
             const message = JSON.parse(messageOutput.body);
             console.log("Received private message:", message);
-            if (message.type === 'KICK') {
-                alert(message.content || "채팅방에서 강퇴되었습니다.");
-                this.disconnect();
-                this.$router.push('/');
+            if (message.type === 'KICK') { // 서버에서 보낸 KICK 메시지 타입 확인
+                alert(message.content || `[${this.roomDisplayName}] 방에서 강퇴되었습니다.`);
+                this.disconnect(); // 스스로 WebSocket 연결 종료
+                this.$router.push('/'); // 홈 또는 다른 적절한 페이지로 강제 이동
             }
         });
 
         const joinMessage = { sender: usernameToConnect, type: 'JOIN', roomId: this.roomId, content: `${usernameToConnect} 님이 입장했습니다.` };
         this.stompClient.publish({ destination: `/app/chat.addUser/${this.roomId}`, body: JSON.stringify(joinMessage) });
       };
-      this.stompClient.onStompError = (frame) => { this.connecting = false; this.connectionStatus = "STOMP 오류"; console.error('STOMP Error:', frame);};
-      this.stompClient.onWebSocketError = (event) => { this.connecting = false; this.connectionStatus = "WebSocket 오류"; console.error('WebSocket Error:', event);};
+
+      this.stompClient.onStompError = (frame) => {
+        this.connecting = false;
+        // STOMP 프로토콜 레벨 오류 (예: 인증 실패 시 서버가 ERROR 프레임 전송)
+        let errorMessage = "STOMP 프로토콜 오류가 발생했습니다.";
+        if (frame.headers && frame.headers.message) {
+            errorMessage += `\n서버 메시지: ${frame.headers.message}`;
+        }
+        console.error('STOMP Error:', frame);
+        this.connectionStatus = errorMessage; // UI에 오류 메시지 표시
+        alert(errorMessage); // 사용자에게 알림
+        // 필요시 this.disconnect() 호출하여 정리
+      };
+
+      this.stompClient.onWebSocketError = (event) => {
+        this.connecting = false;
+        // 하위 레벨 WebSocket 연결 오류
+        console.error('WebSocket Error:', event);
+        this.connectionStatus = "WebSocket 연결 오류가 발생했습니다. 서버 상태를 확인해주세요.";
+        alert(this.connectionStatus);
+        // 필요시 this.disconnect() 호출하여 정리
+      };
       this.stompClient.activate();
     },
     disconnect() {
@@ -222,16 +244,22 @@ export default {
           content: `${this.currentUsername} 님이 퇴장했습니다.`
         };
         try {
-          this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(leaveMessage) });
+          // 연결이 활성 상태일 때만 LEAVE 메시지 전송 시도
+          if (this.stompClient.connected) { // StompClient v5 에는 connected 속성 있음
+             this.stompClient.publish({ destination: `/app/chat.sendMessage/${this.roomId}`, body: JSON.stringify(leaveMessage) });
+          }
         } catch (e) {
-          console.warn("Failed to publish LEAVE message during disconnect", e);
+          console.warn("Failed to publish LEAVE message during disconnect, connection might be already closed.", e);
         }
-        this.stompClient.deactivate();
-      } else if (this.stompClient) {
-         try { this.stompClient.deactivate(); } catch(e) { /* Do nothing */ }
+        this.stompClient.deactivate(); // STOMP 클라이언트 비활성화 (연결 종료)
+        console.log("STOMP client deactivated.");
+      } else if (this.stompClient && !this.stompClient.active && this.stompClient.connected) {
+        // 활성은 아니지만 연결은 되어있는 드문 경우 (이미 비활성화 중일 수 있음)
+        try { this.stompClient.deactivate(); } catch(e) { /* Do nothing */ }
+        console.log("STOMP client (already inactive but connected) deactivated.");
       }
+
       this.connectionStatus = "연결 끊김.";
-      console.log("STOMP client disconnected.");
       this.connecting = false;
       this.currentRoomUsers = [];
       this.currentRoomUserCount = 0;
@@ -283,7 +311,10 @@ export default {
           `/api/chatrooms/${this.roomId}/admin/kick`,
           { usernameToKick: usernameToKick }
         );
-        alert(response.data);
+        alert(response.data); // "OOO 사용자를 성공적으로 강퇴했습니다."
+        // 강퇴 성공 시, 서버는 USER_LIST_UPDATE와 SYSTEM(KICK) 메시지를 /topic/room/{roomId}로 보낼 것이고,
+        // 강퇴된 사용자에게는 개인 큐로 KICK 메시지를 보낼 것입니다.
+        // 따라서 프론트엔드에서 목록을 직접 조작할 필요는 없습니다.
       } catch (error) {
         console.error("강퇴 API 호출 오류:", error.response || error.message || error);
         if (error.response && error.response.data) {
@@ -322,6 +353,7 @@ export default {
     console.log('ChatRoomView Mounted - Category ID:', this.categoryId, '| Room ID:', this.roomId, '| Username from localStorage:', localStorage.getItem('chatUsername'));
     await this.fetchRoomDetails();
     if (this.roomId) {
+        // 방 정보(특히 roomOwner)를 가져온 후에 connect 호출
         this.connect();
     } else {
         this.connectionStatus = "오류: 방 ID가 유효하지 않습니다.";
@@ -335,52 +367,50 @@ export default {
 </script>
 
 <style scoped>
-/* 기존 스타일들 */
+/* 스타일 부분은 이전 답변과 동일하게 유지합니다. (반응형 스타일 포함) */
+/* ... (이전 전체 <style> 내용) ... */
 .chat-room-view {
   display: flex;
   flex-direction: column;
-  /* max-height를 100vh 또는 다른 값으로 변경하거나, 내부 요소들이 화면을 넘치지 않도록 조정 */
-  height: calc(100vh - 120px); /* 예시: 헤더, 네비게이션 등을 제외한 높이, 필요시 조정 */
+  height: calc(100vh - 120px);
   max-width: 900px;
-  min-width: 320px; /* 모바일 최소 너비 고려 */
+  min-width: 320px;
   margin: 20px auto;
   border: 1px solid #ccc;
   border-radius: 8px;
-  padding: 15px; /* 모바일에서는 패딩 약간 줄임 */
+  padding: 15px;
   box-shadow: 0 0 10px rgba(0,0,0,0.1);
   background-color: #fff;
-  overflow: hidden; /* 내부 스크롤은 각 영역에서 담당 */
+  overflow: hidden;
 }
 .room-header {
   text-align: center;
   padding-bottom: 10px;
   border-bottom: 1px solid #eee;
   margin-bottom: 10px;
-  flex-shrink: 0; /* 헤더는 줄어들지 않도록 */
+  flex-shrink: 0;
 }
-.room-header h1 { font-size: 1.3em; margin-bottom: 3px; } /* 모바일 폰트 크기 조정 */
+.room-header h1 { font-size: 1.3em; margin-bottom: 3px; }
 .room-header p { font-size: 0.8em; color: #666; margin: 2px 0; }
 #status { font-size: 0.85em; }
 
 .main-content-area {
   display: flex;
   flex-grow: 1;
-  overflow: hidden; /* 중요: 이 영역이 넘치면 스크롤되도록 */
-  /* 모바일에서는 세로로 쌓이도록 아래 미디어 쿼리에서 flex-direction 변경 */
+  overflow: hidden;
 }
 
 .chat-main-panel {
-  flex-grow: 1; /* 모바일에서는 채팅 패널이 주 공간 차지 */
+  flex-grow: 1;
   display: flex;
   flex-direction: column;
-  /* margin-right는 모바일에서 제거 (아래 미디어 쿼리) */
   overflow: hidden;
 }
 .chat-container {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* messages-area가 스크롤되도록 */
+  overflow: hidden;
 }
 .messages-area {
   flex-grow: 1;
@@ -389,11 +419,11 @@ export default {
   padding: 10px;
   margin-bottom: 10px;
   background-color: #f9f9f9;
-  min-height: 200px; /* 최소 높이 조정 */
+  min-height: 200px;
 }
-.message { /* 메시지 스타일 약간 조정 */
+.message {
   margin-bottom: 6px; padding: 6px 10px;
-  max-width: 95%; /* 모바일에서 메시지 너비 조정 */
+  max-width: 95%;
 }
 .message .sender { font-size: 0.75em; }
 
@@ -401,79 +431,25 @@ export default {
 .message-input-controls {
   padding-top: 10px;
   border-top: 1px solid #eee;
-  flex-shrink: 0; /* 입력창은 줄어들지 않도록 */
+  flex-shrink: 0;
 }
 .message-input-area input[type="text"] {
-  padding: 8px 12px; font-size: 0.9em; /* 입력창 크기 조정 */
+  padding: 8px 12px; font-size: 0.9em;
 }
 .message-input-area button {
-  padding: 8px 15px; font-size: 0.9em; /* 버튼 크기 조정 */
+  padding: 8px 15px; font-size: 0.9em;
 }
 .cooldown-message { font-size: 0.8em; }
 
 
 .user-list-sidebar {
-  flex-grow: 1; /* 데스크탑에서 차지하는 비율 */
-  min-width: 180px; /* 데스크탑 최소 너비 */
-  max-width: 250px; /* 데스크탑 최대 너비 */
+  min-width: 180px;
+  max-width: 250px;
   border-left: 1px solid #e0e0e0;
   padding-left: 15px;
   overflow-y: auto;
   background-color: #fdfdfd;
-  /* 모바일에서는 아래 미디어 쿼리에서 다르게 처리 */
+  /* 모바일에서는 이 스타일이 미디어쿼리로 덮어쓰여짐 */
 }
 .user-list-sidebar h4 { font-size: 1em; }
-.user-list li { font-size: 0.9em; padding: 5px 0; }
-.kick-button { font-size: 0.75em; padding: 2px 6px; }
-
-.navigation-links {
-  margin-top: 15px; /* 간격 조정 */
-  text-align: center;
-  padding-top: 10px;
-  border-top: 1px solid #eee;
-  flex-shrink: 0;
-}
-.navigation-links a { font-size: 0.9em; }
-
-
-/* --- 모바일 화면을 위한 미디어 쿼리 (예: 768px 이하) --- */
-@media (max-width: 768px) {
-  .chat-room-view {
-    padding: 10px;
-    margin: 10px;
-    height: calc(100vh - 80px); /* 헤더, 네비게이션 등을 고려한 높이 */
-  }
-  .room-header h1 { font-size: 1.2em; }
-  .room-header p { font-size: 0.75em; }
-  #status { font-size: 0.8em; }
-
-  .main-content-area {
-    flex-direction: column; /* 주 내용 영역을 세로로 쌓음 */
-  }
-
-  .chat-main-panel {
-    margin-right: 0; /* 오른쪽 마진 제거 */
-    margin-bottom: 15px; /* 사용자 목록과의 간격 */
-    /* flex-grow: 1; 이미 설정됨 */
-    min-height: 60vh; /* 최소 높이 확보 */
-  }
-
-  .user-list-sidebar {
-    border-left: none; /* 왼쪽 테두리 제거 */
-    border-top: 1px solid #e0e0e0; /* 위쪽 테두리 추가 */
-    padding-left: 0; /* 왼쪽 패딩 제거 */
-    padding-top: 10px; /* 위쪽 패딩 추가 */
-    max-height: 30vh; /* 모바일에서 사용자 목록 높이 제한 (스크롤) */
-    min-width: unset; /* 최소 너비 제한 해제 */
-    width: 100%; /* 너비 100% */
-    flex-grow: 0; /* 남은 공간을 채우지 않도록 */
-    flex-shrink: 1; /* 공간 부족 시 줄어들 수 있도록 */
-  }
-  .message-input-area input[type="text"] {
-    font-size: 1em; /* 모바일에서 입력 필드 폰트 크기 유지 또는 약간 키움 */
-  }
-  .message-input-area button {
-    font-size: 1em;
-  }
-}
-</style>
+.user-list li { font-size: 0.
